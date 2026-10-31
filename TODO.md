@@ -119,6 +119,9 @@ Handoff document: what is done, what was decided, what comes next.
 
 ## Next patch
 
+- r5 M1: a guard of a fireplace read lit is never dropped, even when it can no longer leave with the configured
+  key (18b: 4 such old guards, the key's fireplace turn off sent once and not kept). When a new turn off can
+  leave, drop first a guard that cannot.
 - /data unreadable: one read at each start (`firstWait` 0), so a restart loop reads faster than the
   interval. Keep the time of the last read elsewhere (a second small file) or wait one interval when
   the start follows a recent one.
