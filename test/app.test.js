@@ -77,7 +77,10 @@ test('turn on: the reads turn it off when the timer is gone', async () => {
   const t = await setup({ config: ALLOW });
   t.dev.ignore.add('time_remaining');
   await t.press('turn-on', 1, 25 * SECOND);
-  assert.equal(t.dev.state.power, 0, 'turned off by the start check');
+  assert.equal(t.dev.state.power, 1, 'the timer is posted once more first');
+  await t.advance(40 * SECOND, 100);
+  assert.equal(t.dev.posts.filter((p) => p.command === 'time_remaining').length, 2);
+  assert.equal(t.dev.state.power, 0, 'then turned off');
 });
 
 test('turn on refused while a disabling fault is listed', async () => {

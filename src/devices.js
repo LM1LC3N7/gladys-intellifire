@@ -139,7 +139,7 @@ export function selectOptions(role, language) {
 export const deviceName = (serial) => `IntelliFire ${serial.slice(-4).toUpperCase()}`;
 
 /** The Gladys device of the fireplace read (`data` of parsePoll, `serial` known). */
-export function buildDevice(gladys, serial, data, { language }) {
+export function buildDevice(gladys, serial, data, { language, maxTemperature = TEMPERATURE.max }) {
   const ids = fireplaceIds(gladys, serial);
   const params = [{ name: 'serial', value: serial }];
   if (data?.firmware) params.push({ name: 'firmware', value: data.firmware });
@@ -155,6 +155,8 @@ export function buildDevice(gladys, serial, data, { language }) {
       ...(role === FEATURES.FLAME_HEIGHT || role === FEATURES.FAN_SPEED
         ? { supported_options: selectOptions(role, language) }
         : {}),
+      // The setpoint offered never above the highest setpoint of the configuration.
+      ...(role === FEATURES.SETPOINT ? { max: Math.min(TEMPERATURE.max, maxTemperature) } : {}),
     })),
     params,
   };

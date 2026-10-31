@@ -57,6 +57,8 @@ export function fakeFireplace({ timers, latencyMs = 5, applyDelayMs = 20 } = {})
     status: {},
     /** Commands answered with a status: { time_remaining: 422 }. */
     commandStatus: {},
+    /** The next N posts answered 403 whatever their signature (challenges expired). */
+    force403: 0,
     /** Commands accepted but never applied: Set of names. */
     ignore: new Set(),
     /** Paths that never answer (until the timeout or an abort). */
@@ -113,14 +115,20 @@ export function fakeFireplace({ timers, latencyMs = 5, applyDelayMs = 20 } = {})
       return { status: 200, body: challenge.toUpperCase() };
     }
     if (method === 'POST' && path === '/post') {
+      if (dev.force403 > 0) {
+        dev.force403 -= 1;
+        return { status: 403, body: '' };
+      }
       const form = Object.fromEntries(new URLSearchParams(body ?? ''));
       const value = Number(form.value);
       const ok =
         form.user === dev.userId &&
         dev.challenges.some((c) => dev.signed(c, form.command, form.value) === form.response);
       if (!ok) return { status: 403, body: '' };
-      if (dev.commandStatus[form.command])
+      if (dev.commandStatus[form.command]) {
+        dev.onStatus?.(form.command);
         return { status: dev.commandStatus[form.command], body: '' };
+      }
       dev.posts.push({ command: form.command, value, at: dev.clock() });
       if (!dev.ignore.has(form.command)) {
         timers.setTimeout(() => dev.apply(form.command, value), dev.applyDelayMs);

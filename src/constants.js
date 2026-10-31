@@ -17,6 +17,20 @@
 // "Retrieve the key" button (src/intellifire/cloud.js).
 // -----------------------------------------------------------------------------
 
+import { readFileSync } from 'node:fs';
+
+/** The version of the integration (package.json, bumped by the release). */
+export const VERSION = (() => {
+  try {
+    const { version } = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    );
+    return /^\d+\.\d+\.\d+$/.test(version) ? version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
+
 export const DEFAULT_PORT = 80;
 
 export const PATHS = {
@@ -117,7 +131,7 @@ export const CLOUD = {
   locations: '/a/enumlocations',
   fireplaces: '/a/enumfireplaces',
   /** The integration says who it is: never the User-Agent of the app nor of intellifire4py. */
-  userAgent: 'gladys-intellifire/0.1.0 (+https://github.com/LM1LC3N7/gladys-intellifire)',
+  userAgent: `gladys-intellifire/${VERSION} (+https://github.com/LM1LC3N7/gladys-intellifire)`,
 };
 
 export const LIMITS = {
@@ -156,6 +170,10 @@ export const TIMINGS = {
   attemptWriteEvery: MINUTE,
   /** `getConfig()` failed: tried again this often, forever. */
   configRetry: 30 * SECOND,
+  /** ... every 5 s while a turn off waits for the key it gives. */
+  configRetryStop: 5 * SECOND,
+  /** The longest wait for /data (a load, a save before a turn on): beyond, done without it. */
+  dataWait: 2 * SECOND,
   /** The publisher sends what is pending every second; unchanged states again every 30 min. */
   flushInterval: SECOND,
   stateHeartbeat: 30 * MINUTE,
@@ -172,14 +190,18 @@ export const TIMINGS = {
   commandMinRequest: 250,
   /** A challenge is used within this time after it was received (the module keeps it ~10 s). */
   challengeMaxAge: 5 * SECOND,
+  /** Challenges asked for one command at most (intellifire4py: 10). */
+  challengeTries: 10,
   /** After a post, the read back waits this long. */
   applyWait: 500,
   /** Reads after a command, spaced: its effect, then a check. */
   followUps: [5 * SECOND, 20 * SECOND],
   /** A command not confirmed: a new one is always sent for this long (never "already so"). */
   pendingFor: 90 * SECOND,
-  /** A turn on from Gladys: its timer checked by the reads of this window. */
-  startCheckFor: 2 * MINUTE,
+  /** A session of Gladys: the fire on without its timer this long after the post: acted on. */
+  timerGrace: 10 * SECOND,
+  /** A thermostat session of Gladys: turned off this long after the end of its time. */
+  sessionMargin: 2 * MINUTE,
   /** The turn off: tried again every 250 ms until 3 s after the click. */
   stopRetry: 250,
   stopRetryFor: 3_000,
@@ -187,6 +209,8 @@ export const TIMINGS = {
   stopSaveWait: 200,
   /** A turn off not seen applied: checked every 15 s. */
   stopCheck: 15 * SECOND,
+  /** ... spaced up to this while nothing can leave (unreachable, 403s). */
+  stopCheckMax: HOUR,
   /** A read that started this soon after the turn off left may not show it yet. */
   stopApplyDelay: 2 * SECOND,
   /** A turn off not applied is posted again at most 3 times (then held, said in the status). */

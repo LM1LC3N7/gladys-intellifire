@@ -4,11 +4,13 @@
 // request at a time is the business of the caller (src/lane.js): this client
 // only chains the requests of one command.
 //
-// A post answered 403 to a challenge received less than 5 s before is the
-// key or the user id refused, but a challenge may also have just expired:
-// a second post with a NEW challenge is tried once (time allowing); a 403
-// again is a refusal (`ERROR_KINDS.AUTH`). Reads are never retried here; a
-// post is never sent twice for one challenge.
+// A post answered 403 is, as intellifire4py reads it, a challenge expired:
+// a new challenge is asked and the post signed again, up to 10 times within
+// the time of the command. Running out of time after a 403 is a failure to
+// try again (`CHALLENGE`), never a refusal; 10 posts answered 403 are
+// `AUTH`, which the app takes as a refused key only on other proofs (a key
+// never accepted by this serial, the serial read at the address). A
+// challenge older than 5 s is never posted. Reads are never retried here.
 // -----------------------------------------------------------------------------
 
 import { COMMANDS, PATHS, TIMINGS } from '../constants.js';
@@ -97,6 +99,7 @@ export class FireplaceClient {
         throw err;
       }
     };
+    let forbidden = 0;
     for (let attempt = 1; ; attempt += 1) {
       const challenge = parseChallenge(
         // A challenge is only a nonce: asking for it changes nothing (`sent` stays as it was).
@@ -106,7 +109,15 @@ export class FireplaceClient {
         throw new FireplaceError(ERROR_KINDS.PROTOCOL, 'No challenge', { sent });
       }
       const receivedAt = this.now();
+      const tooOld = () => this.now() - receivedAt > TIMINGS.challengeMaxAge;
       const body = signedForm(credentials, challenge, command.name, value);
+      if (tooOld()) {
+        // Never posted on a challenge the module may have dropped: a new one.
+        if (attempt >= TIMINGS.challengeTries) {
+          throw new FireplaceError(ERROR_KINDS.CHALLENGE, 'Challenges too slow', { sent });
+        }
+        continue;
+      }
       const res = await step(
         (timeoutMs) =>
           this.transport({
@@ -118,7 +129,7 @@ export class FireplaceClient {
             timeoutMs,
             signal,
             beforeSend: () => {
-              if (this.now() - receivedAt > TIMINGS.challengeMaxAge) {
+              if (tooOld()) {
                 throw new Error('Challenge too old');
               }
               beforeSend?.();
@@ -132,12 +143,21 @@ export class FireplaceClient {
       }
       // Answered with a refusal (a 4xx): that post was not applied. A 5xx may have been.
       sent = res.status >= 500;
-      if (res.status === 403 && attempt === 1 && left() >= TIMINGS.commandMinRequest * 2) {
-        // A challenge just expired, or a key refused: one more try with a new challenge.
-        continue;
-      }
       if (res.status === 403) {
-        throw new FireplaceError(ERROR_KINDS.AUTH, 'HTTP 403', { status: 403, sent: false });
+        // intellifire4py: "Invalid challenge code (it may have expired)": a new challenge.
+        forbidden += 1;
+        if (attempt >= TIMINGS.challengeTries) {
+          throw new FireplaceError(ERROR_KINDS.AUTH, 'HTTP 403', { status: 403, sent, forbidden });
+        }
+        if (left() < TIMINGS.commandMinRequest) {
+          // Out of time is never a proof of a refused key: a failure to try again.
+          throw new FireplaceError(ERROR_KINDS.CHALLENGE, 'HTTP 403, no time left', {
+            status: 403,
+            sent,
+            forbidden,
+          });
+        }
+        continue;
       }
       throw Object.assign(statusError(res), { sent });
     }
@@ -149,7 +169,7 @@ export function errorReason(err) {
   if (err?.kind === ERROR_KINDS.HTTP) {
     return err.redirect ? `HTTP ${err.status} (redirect)` : `HTTP ${err.status}`;
   }
-  if (err?.kind === ERROR_KINDS.AUTH) return 'HTTP 403';
+  if (err?.kind === ERROR_KINDS.AUTH || err?.kind === ERROR_KINDS.CHALLENGE) return 'HTTP 403';
   return err?.kind ?? 'error';
 }
 

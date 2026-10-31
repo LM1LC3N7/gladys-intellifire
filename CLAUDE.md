@@ -53,10 +53,13 @@ test/kit/                         gladys-testkit files, as is (clocks, loopback 
   error. A `secret` field is "kept by Gladys in its database, never shown again", never "encrypted".
 - **No switch, no writable binary**: turn on and off are buttons, the flame height and the fan selects.
 - **The turn off**: never behind the option, a read, a command, a pause or a missing configuration; it
-  aborts what holds the line; kept in /data (200 ms at most for the save); let go only by a read
-  showing it off or a newer turn on from Gladys, never by time.
+  aborts what holds the line; kept in /data (200 ms at most for the save) with the serial of its
+  fireplace, follows the configured address; let go only by a read of that serial showing it off or a
+  newer turn on from Gladys, never by time. A 403 is a challenge expired: "key refused" only on proof.
 - **Turn on, flame height, fan, setpoint**: behind `allow_control`, decided on a fresh read, checked
-  again in `beforeSend`; a turn on always sets the timer, or the fireplace is turned off.
+  again in `beforeSend`; a turn on (and a setpoint) always sets the timer, or the fireplace is turned
+  off; the session is watched by the reads (in /data, never lifted by time).
+- **/data**: opened non-blocking, regular files only, every wait bounded.
 - **One HTTP exchange at a time** (`src/lane.js`).
 - **Clocks**: the monotonic clock for every decision in memory; the wall clock only for /data.
 - **Changelog** under `## [Unreleased]`; user-facing texts in English and French; docs in sync.

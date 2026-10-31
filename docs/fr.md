@@ -32,7 +32,9 @@ jamais la flamme.
    compte, enregistrez, puis cliquez sur **Récupérer la clé**. Gladys se connecte une seule fois au
    cloud IntelliFire (iftapi.net, en HTTPS), prend la clé du foyer dont le numéro de série a été lu à
    l'adresse et l'enregistre. Vous pouvez ensuite effacer le mot de passe. Vous pouvez aussi saisir
-   la clé et l'identifiant vous-même.
+   la clé et l'identifiant vous-même : si le foyer est déjà dans Home Assistant (intégration
+   IntelliFire), ce sont les valeurs `api_key` et `user_id` de son entrée de configuration. Ni l'API
+   locale du foyer ni sa découverte ne donnent la clé.
 
 Le mot de passe, la clé et l'identifiant sont gardés par Gladys dans sa base, jamais réaffichés, jamais
 écrits dans les journaux ni dans /data. Le mot de passe n'est envoyé qu'à iftapi.net et seulement au
@@ -49,22 +51,30 @@ seule requête à la fois vers le module. Une valeur absente ou illisible n'est 
 ## Éteindre
 
 Le bouton **Éteindre** envoie l'extinction (puissance 0), puis remet la consigne du thermostat à 0 (pour
-qu'aucun thermostat ne rallume la flamme). Il ne dépend ni de l'option, ni d'une lecture préalable, ni
+qu'aucun thermostat ne rallume la flamme). Chaque envoi demande un défi au module ; un refus HTTP 403 est,
+comme le lit intellifire4py, un défi expiré : un nouveau défi est demandé, jusqu'à 10 fois. Il ne dépend ni de l'option, ni d'une lecture préalable, ni
 d'une pause demandée par le module, ni d'une commande en cours (il l'interrompt : une commande cliquée
 avant lui et pas encore partie est abandonnée), ni d'une lecture bloquée (il la coupe). Il part vers
 l'adresse saisie, ou celle de la dernière lecture gardée dans /data si la configuration n'est pas lue.
+Elle appartient au foyer (son numéro de série), pas à une adresse : si vous saisissez une nouvelle
+adresse, l'extinction gardée la suit ; si un autre IntelliFire répond à l'adresse, rien ne lui est
+envoyé, ses lectures ne lèvent pas l'extinction, et le statut le dit.
 
 L'extinction ne peut pas partir, et elle est **gardée** (dans /data) jusqu'à ce qu'elle parte, dans ces
 cas exactement :
 
 - aucune adresse connue (ni saisie, ni gardée) : refusée, rien n'est gardé ;
 - pas de clé ou d'identifiant valides : elle part dès qu'ils sont enregistrés (bouton ou saisie) ;
-- le foyer refuse la clé ou l'identifiant (HTTP 403, deux fois avec un nouveau défi) : elle n'est plus
-  essayée d'elle-même ; elle part dès qu'une nouvelle clé est enregistrée, à une lecture réussie par le
-  bouton « Tester la connexion », ou à un nouveau clic ;
+- le foyer refuse la clé ou l'identifiant, sur preuve seulement (10 défis refusés en 403 dans un même
+  envoi, le numéro de série de ce foyer lu à l'adresse, une clé qu'il n'a jamais acceptée) : elle n'est
+  plus essayée d'elle-même ; elle part dès que la clé est enregistrée (la même aussi), à un succès du
+  bouton « Tester la connexion », ou à un nouveau clic. Des 403 quand le temps manque, ou avec une clé
+  déjà acceptée par ce foyer, ne sont jamais un refus : elle est réessayée ;
+- un autre foyer (autre numéro de série) répond à l'adresse : rien envoyé, elle attend le sien ;
 - après un redémarrage, elle attend la lecture de la configuration (la clé est un secret, jamais dans
   /data) ;
-- le module ne répond pas : essayée toutes les 250 ms pendant 3 s, puis toutes les 15 s.
+- le module ne répond pas (ou ne répond que 403) : essayée toutes les 250 ms pendant 3 s, puis toutes
+  les 15 s, espacé jusqu'à 1 h après quatre essais de suite sans envoi.
 
 Une extinction est confirmée seulement par une lecture qui montre la flamme éteinte et le thermostat
 arrêté. Sinon elle est relue toutes les 15 s et renvoyée tant que la flamme est allumée, 3 fois au plus ;
@@ -77,13 +87,26 @@ par un allumage cliqué ensuite depuis Gladys avec l'option ; jamais par le temp
 Désactivés par défaut. Avec l'option, chaque commande lit d'abord le foyer (lecture fraîche, jamais
 l'état en mémoire) et vérifie de nouveau l'option juste avant chaque envoi. **Allumer** envoie la
 flamme puis, aussitôt, une **minuterie** (60 min par défaut, 10 à 180) : le foyer s'éteint de lui-même
-à son terme. Si la minuterie ne peut pas être posée, Gladys éteint le foyer aussitôt ; si les lectures
-des deux minutes suivantes montrent la flamme sans cette minuterie, Gladys l'éteint aussi.
+à son terme. Si la minuterie ne peut pas être posée, Gladys éteint le foyer aussitôt (la réponse dit si
+l'extinction est partie). Ensuite, les lectures surveillent la séance, sans limite de durée et même
+après un redémarrage (elle est gardée dans /data) : la minuterie lue (pas plus longue que la séance)
+ou le foyer lu éteint la terminent ; un foyer lu éteint puis rallumé à la main n'est jamais éteint par
+Gladys. La flamme lue sans cette minuterie 10 s après l'envoi : la minuterie est envoyée une seconde
+fois, puis, toujours absente, Gladys éteint le foyer.
+
+La **consigne** met le foyer en mode thermostat, qui n'a pas d'arrêt de sécurité de 9 h (réponse de
+Hearth & Home dans intellifire4py, ticket 312) : Gladys envoie donc d'abord la minuterie de la séance,
+puis la consigne, et surveille la séance comme un allumage ; à la fin de la séance (plus 2 min), si la
+flamme ou le thermostat sont encore lus allumés, Gladys éteint le foyer. Si la consigne relue n'est
+pas celle envoyée, Gladys remet aussitôt la consigne à 0 (thermostat arrêté). Une consigne envoyée
+remplace donc une minuterie déjà en cours. À vérifier sur un vrai foyer : la fin de la minuterie
+arrête-t-elle le mode thermostat.
 
 Une commande est refusée, sans rien envoyer, quand :
 
 - l'option est décochée, ou la configuration pas encore lue ;
-- la clé ou l'identifiant manquent, ou le foyer les a refusés ;
+- la clé ou l'identifiant manquent, ou le foyer les a refusés (sur preuve, voir plus haut ; levé par
+  un enregistrement de la clé ou un succès de « Tester la connexion ») ;
 - une autre commande est en cours, une extinction est en cours d'envoi, ou (sauf pour Allumer) une
   extinction est gardée ;
 - le module a demandé d'attendre (HTTP 429 ou 503) ;

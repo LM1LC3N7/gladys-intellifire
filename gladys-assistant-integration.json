@@ -134,12 +134,12 @@
       "key": "session_duration",
       "type": "number",
       "label": {
-        "en": "Timer of a turn on (min)",
-        "fr": "Minuterie d'un allumage (min)"
+        "en": "Timer of a turn on or a setpoint (min)",
+        "fr": "Minuterie d'un allumage ou d'une consigne (min)"
       },
       "description": {
-        "en": "Set right after every turn on from Gladys: the fireplace turns itself off at its end (60 min by default, 10 to 180). Without it, Gladys turns the fireplace off.",
-        "fr": "Posée juste après chaque allumage depuis Gladys : le foyer s'éteint de lui-même à son terme (60 min par défaut, de 10 à 180). Sans elle, Gladys éteint le foyer."
+        "en": "Set right after every turn on from Gladys, and before every setpoint (the thermostat mode has no safety shutdown of its own): the fireplace turns itself off at its end (60 min by default, 10 to 180). Without it, Gladys turns the fireplace off.",
+        "fr": "Posée juste après chaque allumage depuis Gladys, et avant chaque consigne (le mode thermostat n'a pas d'arrêt de sécurité à lui) : le foyer s'éteint de lui-même à son terme (60 min par défaut, de 10 à 180). Sans elle, Gladys éteint le foyer."
       },
       "required": false,
       "default": 60,

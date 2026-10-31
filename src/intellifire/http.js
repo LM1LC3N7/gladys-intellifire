@@ -23,8 +23,10 @@ export const ERROR_KINDS = Object.freeze({
   TIMEOUT: 'timeout',
   /** An HTTP status other than 2xx (`status` holds it). */
   HTTP: 'http',
-  /** 403 to a post signed with a fresh challenge: the key or the user id refused. */
+  /** 403 to every post of a command (10 fresh challenges): maybe the key refused (the app decides). */
   AUTH: 'auth',
+  /** 403 (a challenge expired, as intellifire4py reads it), and no time left to try more. */
+  CHALLENGE: 'challenge',
   /** 429 (`retryAfter` in ms when the fireplace gave one). */
   RATE_LIMITED: 'rate_limited',
   /** Too large, not JSON, not the expected shape. */

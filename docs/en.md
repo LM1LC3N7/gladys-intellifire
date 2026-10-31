@@ -31,7 +31,9 @@ flame.
    IntelliFire account: enter the e-mail address and password of the account, save, then click
    **Retrieve the key**. Gladys signs in once to the IntelliFire cloud (iftapi.net, over HTTPS), takes
    the key of the fireplace whose serial number was read at the address and saves it. You may then
-   erase the password. You may also type the key and the user id yourself.
+   erase the password. You may also type the key and the user id yourself: if the fireplace is already
+   in Home Assistant (IntelliFire integration), they are the `api_key` and `user_id` values of its
+   config entry. Neither the local API of the fireplace nor its discovery gives the key.
 
 The password, the key and the user id are kept by Gladys in its database, never shown again, never
 written to the logs nor to /data. The password goes to iftapi.net only, and only on the click; the user
@@ -48,20 +50,28 @@ sent as new.
 ## Turn off
 
 The **Turn off** button sends the turn off (power 0), then sets the thermostat setpoint to 0 (so that no
-thermostat lights the flame again). It does not depend on the option, on a read first, on a pause asked
+thermostat lights the flame again). Each post asks the module for a challenge; an HTTP 403 is, as
+intellifire4py reads it, a challenge expired: a new challenge is asked, up to 10 times. It does not depend on the option, on a read first, on a pause asked
 by the module, on a command in progress (it interrupts it: a command clicked before it and not sent yet
 is dropped), nor on a stuck read (it cuts it). It goes to the address typed, or to the one of the last
-read kept in /data while the configuration is not read.
+read kept in /data while the configuration is not read. It belongs to the fireplace (its serial
+number), not to an address: when you type a new address, the kept turn off follows it; when another
+IntelliFire answers at the address, nothing is sent to it, its reads never let the turn off go, and the
+status says so.
 
 The turn off cannot leave, and is **kept** (in /data) until it does, in exactly these cases:
 
 - no address known (neither typed nor kept): refused, nothing kept;
 - no valid key or user id: it leaves as soon as they are saved (button or typed);
-- the fireplace refuses the key or the user id (HTTP 403, twice with a new challenge): it is no longer
-  tried by itself; it leaves as soon as a new key is saved, on a successful read by the "Test the
-  connection" button, or on a new click;
+- the fireplace refuses the key or the user id, on proof only (10 challenges refused with 403 in one
+  post, the serial number of this fireplace read at the address, a key it never accepted): it is no
+  longer tried by itself; it leaves as soon as the key is saved (the same one too), on a success of the
+  "Test the connection" button, or on a new click. 403s when time runs out, or with a key this fireplace
+  already accepted, are never a refusal: it is tried again;
+- another fireplace (another serial number) answers at the address: nothing sent, it waits for its own;
 - after a restart, it waits for the configuration to be read (the key is a secret, never in /data);
-- the module does not answer: tried every 250 ms for 3 s, then every 15 s.
+- the module does not answer (or answers only 403): tried every 250 ms for 3 s, then every 15 s, spaced
+  up to 1 h after four tries in a row where nothing left.
 
 A turn off is confirmed only by a read showing the flame off and the thermostat off. Otherwise it is
 read every 15 s and sent again while the flame is on, 3 times at most; then it is held (said in the
@@ -74,13 +84,24 @@ by time.
 Off by default. With the option, each command first reads the fireplace (a fresh read, never the state
 in memory) and checks the option again right before each post. **Turn on** sends the flame, then at
 once a **timer** (60 min by default, 10 to 180): the fireplace turns itself off at its end. If the timer
-cannot be set, Gladys turns the fireplace off at once; if the reads of the next two minutes show the
-flame without that timer, Gladys turns it off too.
+cannot be set, Gladys turns the fireplace off at once (the answer says whether that turn off left).
+Then the reads watch the session, with no time limit and across restarts (it is kept in /data): the
+timer read (not longer than the session) or the fireplace read off ends it; a fireplace read off then
+lit again by hand is never turned off by Gladys. The flame read without that timer 10 s after the post:
+the timer is sent a second time, then, still missing, Gladys turns the fireplace off.
+
+The **setpoint** puts the fireplace in thermostat mode, which has no 9 h safety shutdown (answer of
+Hearth & Home in intellifire4py issue 312): Gladys therefore sends the timer of the session first, then
+the setpoint, and watches the session as a turn on; at its end (plus 2 min), if the flame or the
+thermostat are still read on, Gladys turns the fireplace off. If the setpoint read back is not the one
+sent, Gladys sets the setpoint to 0 at once (thermostat off). A setpoint sent thus replaces a timer
+already running. To check on a real fireplace: whether the end of the timer stops the thermostat mode.
 
 A command is refused, nothing sent, when:
 
 - the option is off, or the configuration not read yet;
-- the key or the user id is missing, or the fireplace refused them;
+- the key or the user id is missing, or the fireplace refused them (on proof, see above; lifted by a
+  save of the key or a success of "Test the connection");
 - another command is running, a turn off is being sent, or (except for Turn on) a turn off is kept;
 - the module asked to wait (HTTP 429 or 503);
 - the fresh read fails or does not come in time (the command must leave within 3.5 s);

@@ -18,5 +18,9 @@ the notes of the version's GitHub Release.
   seen applied.
 - Turn on (with a timer always set), flame height, fan speed and thermostat setpoint, behind an option
   off by default, decided on a fresh read, bounded.
+- A setpoint always posts the timer of the session first; the session of a turn on or a setpoint is
+  watched until its timer or the fire off is read, across restarts.
+- A 403 is a challenge expired, retried with new challenges; a key is "refused" only on proof.
+- A turn off kept follows its fireplace (serial) to a new address; another fireplace never lets it go.
 - "Retrieve the key" button: one sign-in to the IntelliFire cloud per click, key and user id saved in the
   configuration.

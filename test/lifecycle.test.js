@@ -53,7 +53,7 @@ test('values older than 2 minutes are never sent as new', async () => {
   assert.equal(t.status().connected, false);
 });
 
-test('/data unreadable: never overwritten, a whole interval before the first read', async () => {
+test('/data unreadable: never overwritten, read at once', async () => {
   const clock = testClock({ start: NOW });
   const store = memoryStore(
     { target: { host: HOST, port: 80, serial: SERIAL } },

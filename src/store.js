@@ -5,53 +5,88 @@
 //   - `lastAttemptAt`: the time of the last read (written at most once a
 //     minute, BEFORE the read), so a restart never reads sooner than the
 //     interval;
-//   - `stop`: the turn off not seen applied (address, since, written,
-//     resends, refused): a restart sends it again as soon as the key is
-//     read (the key is a secret: never in /data, so the turn off waits for
-//     the configuration after a restart);
-//   - `start`: a turn on from Gladys whose timer is still being checked;
+//   - `stop`: the turn off not seen applied (address, serial of its
+//     fireplace, since, written, resends, refused): a restart sends it again
+//     as soon as the key is read (the key is a secret: never in /data, so the
+//     turn off waits for the configuration after a restart);
+//   - `start`: the session of a turn on (or a setpoint) from Gladys, checked
+//     until a read shows its timer or the fire off: never dropped by age;
 //   - `pause`: a 429/503 (until).
 // No secret (no key, user id, e-mail address nor password, no hash of
 // them), no personal data. The file is readable by the container user only
-// (0600), bounded and repaired when read. A file that cannot be read is not
-// an empty one: `load()` says so, and the app then never overwrites it.
+// (0600), bounded and repaired when read; never a special file nor a link
+// (opened non-blocking, regular files only). A file that cannot be read is
+// not an empty one: `load()` says so, and the app then never overwrites it.
 // -----------------------------------------------------------------------------
 
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, rename } from 'node:fs/promises';
 import { SESSION, TIMINGS } from './constants.js';
 import { serialOf } from './intellifire/model.js';
 
 export const STATE_FILE = '/data/intellifire-state.json';
 const MAX_BYTES = 16 * 1024;
 
+/**
+ * Every open of /data returns at once, whatever is there (as gladys-usgs-eau
+ * 8eaf822, reviewed): O_NONBLOCK (a FIFO never waits for its other end),
+ * O_NOFOLLOW (a link is refused), then anything but a regular file is
+ * closed before a byte is read or written. The app also bounds every wait
+ * for /data in time (src/app.js).
+ */
+const READ_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW;
+const WRITE_FLAGS =
+  constants.O_WRONLY |
+  constants.O_CREAT |
+  constants.O_TRUNC |
+  constants.O_NONBLOCK |
+  constants.O_NOFOLLOW;
+
 export function fileStore(path = STATE_FILE) {
   // One write at a time: two saves never share the temporary file.
   let chain = Promise.resolve();
+  const write = async (text) => {
+    const temporary = `${path}.tmp`;
+    const handle = await open(temporary, WRITE_FLAGS, 0o600);
+    try {
+      if (!(await handle.stat()).isFile()) throw new Error('not a regular file');
+      await handle.writeFile(text, 'utf8');
+    } finally {
+      await handle.close().catch(() => {});
+    }
+    await rename(temporary, path);
+  };
   return {
-    /** `{ data }`, `{ data: null }` (no file) or `{ unreadable: true }`. */
+    /** `{ data }`, `{ data: null }` (no file) or `{ unreadable: true }` (a special file included). */
     async load() {
-      let text;
+      let handle;
       try {
-        text = await readFile(path, 'utf8');
+        handle = await open(path, READ_FLAGS);
+        const info = await handle.stat();
+        if (!info.isFile() || info.size > MAX_BYTES) return { unreadable: true };
+        const buffer = Buffer.alloc(MAX_BYTES + 1);
+        let size = 0;
+        for (;;) {
+          const { bytesRead } = await handle.read(buffer, size, buffer.length - size, size);
+          if (bytesRead === 0) break;
+          size += bytesRead;
+          if (size > MAX_BYTES) return { unreadable: true };
+        }
+        return { data: JSON.parse(buffer.subarray(0, size).toString('utf8')) };
       } catch (err) {
         return err?.code === 'ENOENT' ? { data: null } : { unreadable: true };
-      }
-      if (text.length > MAX_BYTES) return { unreadable: true };
-      try {
-        return { data: JSON.parse(text) };
-      } catch {
-        return { unreadable: true };
+      } finally {
+        await handle?.close().catch(() => {});
       }
     },
     save(data) {
       const text = JSON.stringify(data);
-      const write = chain.then(async () => {
-        const temporary = `${path}.tmp`;
-        await writeFile(temporary, text, { mode: 0o600 });
-        await rename(temporary, path);
-      });
-      chain = write.catch(() => {});
-      return write;
+      const job = chain.then(
+        () => write(text),
+        () => write(text),
+      );
+      chain = job.catch(() => {});
+      return job;
     },
   };
 }
@@ -65,7 +100,10 @@ export function memoryStore(initial = null, { unreadable = false, failSave = fal
     failSave,
     /** A promise that holds every save until it resolves (a hung disk), or undefined. */
     hang: undefined,
+    /** The same for the load (a frozen mount). */
+    hangLoad: undefined,
     async load() {
+      if (this.hangLoad) await this.hangLoad;
       if (this.unreadable) return { unreadable: true };
       return { data: this.data === null ? null : JSON.parse(JSON.stringify(this.data)) };
     },
@@ -99,6 +137,7 @@ function normalizeStop(raw, now) {
   const since = Number.isFinite(raw.since) && raw.since <= now ? raw.since : now;
   return {
     ...address,
+    serial: serialOf(raw.serial) ?? null,
     since,
     written: raw.written === true,
     // Never written: no resend can have been counted (a turn off that never left is never held).
@@ -107,13 +146,23 @@ function normalizeStop(raw, now) {
   };
 }
 
+/**
+ * The check of a turn on (or a setpoint) from Gladys: never dropped by age
+ * (only a read ends it); a date in the future counts as now.
+ */
 function normalizeStart(raw, now) {
   if (!raw || typeof raw !== 'object' || !Number.isFinite(raw.since)) return null;
-  // A date in the future is invalid; an old one is over.
-  if (raw.since > now || now - raw.since >= TIMINGS.startCheckFor) return null;
   const minutes = intIn(raw.minutes, SESSION.min, SESSION.max);
   const serial = serialOf(raw.serial);
-  return minutes && serial ? { since: raw.since, minutes, serial } : null;
+  if (!minutes || !serial) return null;
+  return {
+    since: Math.min(raw.since, now),
+    minutes,
+    serial,
+    timerSeen: raw.timerSeen === true,
+    reposted: raw.reposted === true,
+    thermostat: raw.thermostat === true,
+  };
 }
 
 /**

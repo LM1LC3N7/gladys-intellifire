@@ -25,17 +25,36 @@ test('during a 429 pause: the turn off still goes', async () => {
   assert.equal(t.dev.state.power, 0);
 });
 
-test('getConfig() failing in connected: retried every 30 s; a turn off waits for the key, then goes', async () => {
-  const t = await setup({ getConfigFails: 1, create: false });
-  assert.match(t.status().text, /ne peut pas être lue/);
-  t.dev.state.power = 1;
-  const ack = t.fire('turn-off');
-  await t.advance(5 * SECOND, 50);
-  refused(await ack, /Aucune adresse|gardée/);
-  await t.advance(30 * SECOND, 100);
-  assert.equal(t.app.configRead, true);
+test('getConfig() failing in connected: the configuration of the connection used, retried', async () => {
+  const t = await setup({ getConfigFails: 2, create: false });
+  assert.equal(t.app.configRead, true, 'gladys.config used meanwhile');
   assert.equal(t.status().connected, true);
-  assert.ok(t.app.config.credentials);
+  t.dev.state.power = 1;
+  ok(await t.press('turn-off'));
+  assert.equal(t.dev.state.power, 0);
+});
+
+test('getConfig() failing and no configuration known: said, retried every 5 s while a turn off waits', async () => {
+  const clock = testClock({ start: NOW });
+  const dev = fakeFireplace({ timers: clock.timers });
+  dev.state.power = 1;
+  const store = memoryStore({
+    target: { host: HOST, port: 80, serial: dev.serial },
+    stop: { host: HOST, port: 80, serial: dev.serial, since: NOW - 60_000, written: false },
+  });
+  const t = await setup({
+    clock,
+    dev,
+    store,
+    boot: true,
+    create: false,
+    config: {},
+    getConfigFails: 2,
+  });
+  assert.match(t.status().text, /ne peut pas être lue/);
+  t.gladys.fake.config = { ...CFG };
+  await t.advance(12 * SECOND, 100);
+  assert.equal(t.dev.state.power, 0, 'left within two retries of 5 s');
 });
 
 test('a read stuck on a silent module is cut: the turn off posts at once', async () => {
@@ -118,7 +137,7 @@ test('a key refused: the turn off kept, never tried by itself, goes with a new k
   const posts = t.dev.requests.filter((r) => r.method === 'POST').length;
   await t.advance(3 * MINUTE, 200);
   assert.equal(t.dev.requests.filter((r) => r.method === 'POST').length, posts);
-  assert.match(t.status().text, /attend une clé/);
+  assert.match(t.status().text, /refusé la clé/);
   assert.equal(t.store.data.stop.refused, true);
   await t.until(t.gladys.fake.configUpdated({ ...bad, api_key: API_KEY }));
   await t.advance(3 * SECOND);

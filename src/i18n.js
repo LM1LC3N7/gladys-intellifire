@@ -122,17 +122,25 @@ export const T = {
     "La clé ou l'identifiant n'est pas valide (clé : caractères hexadécimaux ; les deux sont nécessaires).",
   ),
   keyRefused: both(
-    'The fireplace refused the key or the user id (HTTP 403): enter them again or use "Retrieve the key".',
-    "Le foyer a refusé la clé ou l'identifiant (HTTP 403) : saisissez-les à nouveau ou utilisez « Récupérer la clé ».",
+    'The fireplace refused the key or the user id (ten 403s, a key it never accepted): save them again, test the connection or use "Retrieve the key".',
+    "Le foyer a refusé la clé ou l'identifiant (dix 403, une clé jamais acceptée) : enregistrez-les à nouveau, testez la connexion ou utilisez « Récupérer la clé ».",
   ),
   stopPending: (since) =>
     both(
-      `A turn off from Gladys (${since.en} ago) is not seen applied yet: checked every 15 s.`,
-      `Une extinction depuis Gladys (il y a ${since.fr}) n'est pas encore vue appliquée : vérifiée toutes les 15 s.`,
+      `A turn off from Gladys (${since.en} ago) is not seen applied yet: checked again (every 15 s, spaced up to 1 h while nothing can leave).`,
+      `Une extinction depuis Gladys (il y a ${since.fr}) n'est pas encore vue appliquée : vérifiée à nouveau (toutes les 15 s, espacé jusqu'à 1 h tant que rien ne peut partir).`,
     ),
   stopWaitsKey: both(
-    'A turn off waits for a key and user id accepted by the fireplace: it leaves as soon as they are saved.',
-    "Une extinction attend une clé et un identifiant acceptés par le foyer : elle part dès qu'ils sont enregistrés.",
+    'A turn off waits for a valid key and user id in the configuration: it leaves as soon as they are saved.',
+    "Une extinction attend une clé et un identifiant valides dans la configuration : elle part dès qu'ils sont enregistrés.",
+  ),
+  stopKeyRefused: both(
+    'A turn off waits: the fireplace refused the key or the user id (ten 403s): save the key again or test the connection.',
+    "Une extinction attend : le foyer a refusé la clé ou l'identifiant (dix 403) : enregistrez à nouveau la clé ou testez la connexion.",
+  ),
+  stopOtherSerial: both(
+    'A turn off waits for this fireplace: another one (another serial number) answers at the address.',
+    "Une extinction attend ce foyer : un autre (autre numéro de série) répond à l'adresse.",
   ),
   stopHeld: both(
     'A turn off was posted 4 times and the fireplace still shows the flame: no more posts until a new click (check the fireplace).',
@@ -294,18 +302,42 @@ export const ERRORS = {
     'Sent, the read back shows another value.',
     'Envoyé, la relecture montre une autre valeur.',
   ),
-  noTimer: both(
-    'Turned on, but the timer could not be set: turning off sent.',
-    "Allumé, mais la minuterie n'a pas pu être posée : extinction envoyée.",
+  noTimerOff: both(
+    'Turned on, but the timer could not be set: the fireplace was turned off.',
+    "Allumé, mais la minuterie n'a pas pu être posée : le foyer a été éteint.",
+  ),
+  noTimerSent: both(
+    'Turned on, but the timer could not be set: turn off sent, without confirmation yet.',
+    "Allumé, mais la minuterie n'a pas pu être posée : extinction envoyée, sans confirmation pour le moment.",
+  ),
+  noTimerKept: both(
+    'Turned on, but the timer could not be set: the turn off has not left yet; it is kept and tried again.',
+    "Allumé, mais la minuterie n'a pas pu être posée : l'extinction n'est pas encore partie ; elle est gardée et réessayée.",
+  ),
+  challengeRefused: both(
+    'The fireplace answered 403 to every challenge (an expired challenge, or the key): nothing applied, try again.',
+    "Le foyer a répondu 403 à chaque défi (défi expiré, ou la clé) : rien d'appliqué, réessayez.",
+  ),
+  setpointDiffers: both(
+    'Setpoint sent, another value read back: the thermostat setpoint was set to 0.',
+    'Consigne envoyée, une autre valeur relue : la consigne du thermostat a été remise à 0.',
+  ),
+  stopKeyRefused: both(
+    'Turn off: nothing applied, the fireplace refuses the key or the user id; kept, it leaves as soon as a key is saved or a test read succeeds.',
+    "Extinction : rien d'appliqué, le foyer refuse la clé ou l'identifiant ; gardée, elle part dès qu'une clé est enregistrée ou qu'une lecture de test réussit.",
+  ),
+  stopOtherSerial: both(
+    'Turn off: another fireplace (another serial number) answers at the address: nothing posted; kept for this fireplace.',
+    "Extinction : un autre foyer (autre numéro de série) répond à l'adresse : rien envoyé ; gardée pour ce foyer.",
   ),
   stopNotSent: (reason) =>
     both(
-      `Turn off: nothing sent (${reason}); kept, it is sent again every 15 s.`,
-      `Extinction : rien envoyé (${reason}) ; gardée, renvoyée toutes les 15 s.`,
+      `Turn off: nothing sent (${reason}); kept, tried again (every 15 s, spaced up to 1 h).`,
+      `Extinction : rien envoyé (${reason}) ; gardée, réessayée (toutes les 15 s, espacé jusqu'à 1 h).`,
     ),
   stopWaitsKey: both(
-    'Turn off: nothing sent (no key or user id accepted); kept, it leaves as soon as they are saved.',
-    "Extinction : rien envoyé (pas de clé ou d'identifiant accepté) ; gardée, elle part dès qu'ils sont enregistrés.",
+    'Turn off: nothing sent (no valid key and user id configured); kept, it leaves as soon as they are saved.',
+    "Extinction : rien envoyé (pas de clé et d'identifiant valides configurés) ; gardée, elle part dès qu'ils sont enregistrés.",
   ),
   stopUnconfirmed: both(
     'Turn off sent, without confirmation yet: checked every 15 s.',
