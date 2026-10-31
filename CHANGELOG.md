@@ -28,5 +28,9 @@ the notes of the version's GitHub Release.
   403s prove a refused key for that fireplace only, never when the key is known to be another one's;
   a turn off or a command is never signed with another fireplace's key; a command clicked after
   shutdown is refused, a turn off kept for the next start.
+- A post accepted is credited only to the serial read on its own line (never to the turn off that sent
+  it); saving the key or a test that succeeds forgets the owners deduced; beyond 4 fireplaces, the turn
+  off of the key's fireplace or of one read lit is never let go (the new one is not kept, sent once
+  when it can be, said in the status).
 - "Retrieve the key" button: one sign-in to the IntelliFire cloud per click, key and user id saved in the
   configuration.

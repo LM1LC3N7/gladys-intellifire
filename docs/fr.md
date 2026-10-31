@@ -61,22 +61,30 @@ abandonnée), ni d'une lecture bloquée (elle la coupe). Elle part vers l'adress
 dernière lecture gardée dans /data si la configuration n'est pas lue.
 
 Une extinction appartient à son foyer (son numéro de série) : celui de l'appareil dont le bouton a été
-cliqué, jamais le dernier foyer lu. Chaque foyer a sa propre extinction gardée : jusqu'à 4 foyers ayant
-une extinction gardée en même temps, un clic sur l'extinction d'un autre appareil n'en lève jamais une.
-Au-delà de 4, l'extinction la plus ancienne d'un foyer qui n'est ni celui cliqué ni celui lu à l'adresse
-est levée (écrit dans les journaux). Si vous saisissez une nouvelle adresse, les extinctions gardées
-la suivent. Si la dernière lecture de l'adresse montre un autre IntelliFire (aussi quand une
-vérification ne lit ensuite aucun numéro de série), rien ne lui est envoyé ; si un autre y répond avant
-d'avoir été lu, les envois partent vers l'adresse, il les refuse (403) et ce refus ne compte jamais
-contre la clé. Dans les deux cas, ses lectures ne lèvent pas l'extinction, le statut le dit, et
-l'extinction part dès que ce foyer est relu à l'adresse.
+cliqué, jamais le dernier foyer lu. Chaque foyer a sa propre extinction gardée, 4 au plus : jusqu'à 4,
+un clic sur l'extinction d'un autre appareil n'en lève jamais une. Pour un 5e foyer, une extinction
+n'est levée que si elle peut l'être (dit dans le statut et les journaux) : jamais celle du foyer à qui
+appartient la clé, d'un foyer lu allumé à sa dernière lecture, ni du foyer lu à l'adresse ; d'abord une
+qui ne peut pas partir avec la clé saisie, puis une d'un foyer lu éteint, puis une jamais lue, la plus
+ancienne d'abord. Si aucune ne peut l'être, la nouvelle extinction n'est pas gardée : elle est quand
+même envoyée une fois (dans ses 3 s) si elle peut être signée et qu'aucun autre foyer n'est lu à
+l'adresse, et la réponse et le statut disent ce qui s'est passé (éteignez ce foyer au foyer s'il n'a pas
+été vu éteint). Si vous saisissez une nouvelle adresse, les extinctions gardées la suivent. Si la
+dernière lecture de l'adresse montre un autre IntelliFire (aussi quand une vérification ne lit ensuite
+aucun numéro de série), rien ne lui est envoyé ; si un autre y répond avant d'avoir été lu, les envois
+partent vers l'adresse, il les refuse (403) et ce refus ne compte jamais contre la clé. Dans les deux
+cas, ses lectures ne lèvent pas l'extinction, le statut le dit, et l'extinction part dès que ce foyer
+est relu à l'adresse.
 
 Une extinction n'est signée qu'avec la clé de son propre foyer. Pour autant que Gladys le sache pendant
-cette exécution, la clé saisie appartient au foyer qui a accepté un envoi signé avec elle, ou à celui
-pour lequel elle a été récupérée par « Récupérer la clé » (gardé en mémoire seulement, jamais dans
-/data, oublié quand une autre clé est enregistrée). L'extinction d'un autre foyer n'est alors jamais
-signée avec elle. Tant que Gladys ne le sait pas (après un redémarrage, avant tout envoi accepté),
-l'extinction part avec la clé saisie.
+cette exécution, la clé saisie appartient au foyer qui a accepté un envoi signé avec elle, son numéro de
+série lu sur la ligne de cet envoi (la lecture juste avant ou la relecture juste après ; aucun numéro lu,
+ou deux différents : attribué à personne), ou à celui pour lequel elle a été récupérée par « Récupérer
+la clé ». C'est gardé en mémoire seulement, jamais dans /data. Les foyers qui l'ont acceptée sont oubliés
+quand une clé est enregistrée (la même aussi) ou qu'un test de la connexion réussit ; celui pour lequel
+elle a été récupérée, quand une autre clé est enregistrée. L'extinction d'un autre foyer n'est alors
+jamais signée avec elle. Tant que Gladys ne le sait pas (après un redémarrage, avant tout envoi
+accepté), l'extinction part avec la clé saisie.
 
 L'extinction ne peut pas partir, et elle est **gardée** (dans /data) jusqu'à ce qu'elle parte, dans ces
 cas exactement :
@@ -91,7 +99,10 @@ cas exactement :
   jamais retenues par lui. Des 403 quand le temps manque, ou avec une clé déjà acceptée par ce foyer, ne
   sont jamais un refus : elle est réessayée ;
 - la clé saisie est connue pour appartenir à un autre foyer (voir plus haut) : rien envoyé ; elle part
-  dès qu'est enregistrée une clé dont on ne sait pas qu'elle appartient à un autre foyer ;
+  dès que ce n'est plus connu (une clé enregistrée, la même aussi, ou un test réussi, sauf si la clé a
+  été récupérée pour cet autre foyer : alors dès qu'une autre clé est enregistrée) ;
+- 4 autres foyers ont une extinction gardée, toutes nécessaires (voir plus haut) : pas gardée ;
+  envoyée une fois quand elle peut l'être ;
 - un autre foyer (autre numéro de série) a été lu à l'adresse : rien envoyé, elle attend le sien ;
 - après un redémarrage, elle attend la lecture de la configuration (la clé est un secret, jamais dans
   /data) ;
@@ -157,7 +168,8 @@ passé.
 
 ## Statut
 
-L'écran de configuration dit l'état du foyer, chaque extinction gardée ou retenue (nommée par la fin
-du numéro de série de son foyer, 4 caractères, quand il y en a plusieurs, ou quand ce n'est pas le
-foyer lu), une clé refusée ou absente, un module injoignable (prochain essai), une pause demandée par le
-module.
+L'écran de configuration dit l'état du foyer, chaque extinction gardée ou retenue (nommée par la fin du
+numéro de série de son foyer, 4 caractères, quand il y en a plusieurs, ou quand ce n'est pas le foyer
+lu), une extinction levée ou non gardée pour un 5e foyer (jusqu'à ce que ce foyer en ait de nouveau une
+gardée ou que la configuration soit enregistrée), une clé refusée ou absente, un module injoignable
+(prochain essai), une pause demandée par le module.

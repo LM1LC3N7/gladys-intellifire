@@ -59,20 +59,28 @@ it). It goes to the address typed, or to the one of the last read kept in /data 
 is not read.
 
 A turn off belongs to its fireplace (serial number): the one of the device whose button was clicked,
-never the last fireplace read. Each fireplace has its own turn off kept: up to 4 fireplaces with a turn
-off kept at once, a click on the turn off of another device never lets one go. Beyond 4, the oldest turn
-off of a fireplace that is neither the one clicked nor the one read at the address is let go (written in
-the logs). When you type a new address, the turn offs kept follow it. When the last read of the
-address shows another IntelliFire (also when a check then reads no serial number), nothing is posted to it; when another one
-answers there before it is read, the posts go to the address, it refuses them (403) and that refusal
-never counts against the key. In both cases its reads never let the turn off go, the status says so,
-and the turn off leaves once this fireplace is read at the address again.
+never the last fireplace read. Each fireplace has its own turn off kept, 4 at most: up to 4, a click on
+the turn off of another device never lets one go. For a 5th fireplace, one is let go only if it may be
+(said in the status and the logs): never the one of the fireplace the key belongs to, of a fireplace
+last read lit, nor of the fireplace read at the address; first one that cannot leave with the key typed,
+then one of a fireplace last read off, then one never read, the oldest first. When none may go, the new
+turn off is not kept: it is still sent once (within its 3 s) when it can be signed and no other
+fireplace is read at the address, and the answer and the status say what happened (turn that fireplace
+off at the fireplace when it was not seen applied). When you type a new address, the turn offs kept
+follow it. When the last read of the address shows another IntelliFire (also when a check then reads no
+serial number), nothing is posted to it; when another one answers there before it is read, the posts go
+to the address, it refuses them (403) and that refusal never counts against the key. In both cases its
+reads never let the turn off go, the status says so, and the turn off leaves once this fireplace is read
+at the address again.
 
 A turn off is signed only with the key of its own fireplace. As far as Gladys knows it in this run, the
-key typed belongs to the fireplace that accepted a post signed with it, or to the one it was retrieved
-for with "Retrieve the key" (kept in memory only, never in /data, forgotten when another key is saved).
-The turn off of another fireplace is then never signed with it. As long as Gladys does not know (after a
-restart, before any post accepted), the turn off goes with the key typed.
+key typed belongs to the fireplace that accepted a post signed with it, its serial number read on the
+line of that post (the read right before it or the read back right after it; no serial read, or two
+different ones: credited to nobody), or to the one it was retrieved for with "Retrieve the key". This is
+kept in memory only, never in /data. The fireplaces that accepted it are forgotten when a key is saved
+(the same one too) or a test of the connection succeeds; the one it was retrieved for, when another key
+is saved. The turn off of another fireplace is then never signed with it. As long as Gladys does not
+know (after a restart, before any post accepted), the turn off goes with the key typed.
 
 The turn off cannot leave, and is **kept** (in /data) until it does, in exactly these cases:
 
@@ -85,8 +93,10 @@ The turn off cannot leave, and is **kept** (in /data) until it does, in exactly 
   refusal is this fireplace's only: the turn off and the commands of another fireplace are never held
   by it. 403s when time runs out, or with a key this fireplace already accepted, are never a refusal:
   it is tried again;
-- the key typed is known to belong to another fireplace (see above): nothing posted; it leaves once a
-  key is saved that is not known to belong to another one;
+- the key typed is known to belong to another fireplace (see above): nothing posted; it leaves once
+  that is no longer known (a key saved, the same one too, or a test that succeeds, unless the key was
+  retrieved for that other fireplace: then once another key is saved);
+- 4 other fireplaces have a turn off kept, all needed (see above): not kept; sent once when it can be;
 - another fireplace (another serial number) was read at the address: nothing posted, it waits for its own;
 - after a restart, it waits for the configuration to be read (the key is a secret, never in /data);
 - the module does not answer: tried every 250 ms for 3 s, then every 15 s (it leaves within 15 s of the
@@ -145,6 +155,8 @@ applied yet", "sent, without confirmation" or "nothing sent", as it happened.
 
 ## Status
 
-The configuration screen tells the state of the fireplace, each turn off kept or held (named by the
-last 4 digits of the serial number of its fireplace when there are several, or when it is not the
-fireplace read), a key refused or missing, a module unreachable (next try), a pause asked by the module.
+The configuration screen tells the state of the fireplace, each turn off kept or held (named by the last
+4 digits of the serial number of its fireplace when there are several, or when it is not the fireplace
+read), a turn off let go or not kept for a 5th fireplace (until that fireplace has one kept again or the
+configuration is saved), a key refused or missing, a module unreachable (next try), a pause asked by the
+module.

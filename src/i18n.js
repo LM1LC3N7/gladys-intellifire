@@ -143,9 +143,19 @@ export const T = {
     "Une extinction attend ce foyer : un autre (autre numéro de série) répond à l'adresse.",
   ),
   stopForeignKey: both(
-    "A turn off waits for this fireplace's own key: the key configured is another fireplace's (it accepted it, or it was retrieved for it): nothing posted; it leaves once this fireplace's key is saved.",
-    "Une extinction attend la clé de ce foyer : la clé configurée est celle d'un autre foyer (il l'a acceptée, ou elle a été récupérée pour lui) : rien envoyé ; elle part dès que la clé de ce foyer est enregistrée.",
+    "A turn off waits for this fireplace's own key: the key configured is another fireplace's (read on the line, it accepted a post signed with it, or the key was retrieved for it): nothing posted; it leaves once this fireplace's key is saved (saving the same key again, or a test that succeeds, forgets the fireplace that accepted it).",
+    "Une extinction attend la clé de ce foyer : la clé configurée est celle d'un autre foyer (lu sur la ligne, il a accepté un envoi signé avec elle, ou elle a été récupérée pour lui) : rien envoyé ; elle part dès que la clé de ce foyer est enregistrée (enregistrer la même clé à nouveau, ou un test réussi, oublie le foyer qui l'a acceptée).",
   ),
+  stopDropped: (id) =>
+    both(
+      `The turn off kept for fireplace ${id} was let go: more than 4 fireplaces had one (check that fireplace).`,
+      `L'extinction gardée pour le foyer ${id} a été levée : plus de 4 foyers en avaient une (vérifiez ce foyer).`,
+    ),
+  stopBoundRefused: (id) =>
+    both(
+      `A turn off of fireplace ${id} was not kept: 4 other fireplaces have one, all needed (turn it off at the fireplace).`,
+      `Une extinction du foyer ${id} n'a pas été gardée : 4 autres foyers en ont une, toutes nécessaires (éteignez-le au foyer).`,
+    ),
   /** A note of one turn off kept, when several fireplaces have one. */
   ofFireplace: (id, note) => both(`Fireplace ${id}: ${note.en}`, `Foyer ${id} : ${note.fr}`),
   stopHeld: both(
@@ -256,8 +266,8 @@ export const ERRORS = {
     "Le foyer refuse la clé ou l'identifiant : rien envoyé.",
   ),
   notItsKey: both(
-    "The key configured is another fireplace's (it accepted it, or it was retrieved for it): nothing sent; save this fireplace's key.",
-    "La clé configurée est celle d'un autre foyer (il l'a acceptée, ou elle a été récupérée pour lui) : rien envoyé ; enregistrez la clé de ce foyer.",
+    "The key configured is another fireplace's (read on the line, it accepted a post signed with it, or the key was retrieved for it): nothing sent; save this fireplace's key (saving the same key again, or a test that succeeds, forgets the fireplace that accepted it).",
+    "La clé configurée est celle d'un autre foyer (lu sur la ligne, il a accepté un envoi signé avec elle, ou elle a été récupérée pour lui) : rien envoyé ; enregistrez la clé de ce foyer (enregistrer la même clé à nouveau, ou un test réussi, oublie le foyer qui l'a acceptée).",
   ),
   closed: both(
     'The integration is stopping: nothing sent.',
@@ -341,8 +351,16 @@ export const ERRORS = {
     "Extinction : rien d'appliqué, le foyer refuse la clé ou l'identifiant ; gardée, elle part dès qu'une clé est enregistrée ou qu'une lecture de test réussit.",
   ),
   stopForeignKey: both(
-    "Turn off: the key configured is another fireplace's (it accepted it, or it was retrieved for it): nothing posted; kept, it leaves once this fireplace's key is saved.",
-    "Extinction : la clé configurée est celle d'un autre foyer (il l'a acceptée, ou elle a été récupérée pour lui) : rien envoyé ; gardée, elle part dès que la clé de ce foyer est enregistrée.",
+    "Turn off: the key configured is another fireplace's (read on the line, it accepted a post signed with it, or the key was retrieved for it): nothing posted; kept, it leaves once this fireplace's key is saved (saving the same key again, or a test that succeeds, forgets the fireplace that accepted it).",
+    "Extinction : la clé configurée est celle d'un autre foyer (lu sur la ligne, il a accepté un envoi signé avec elle, ou elle a été récupérée pour lui) : rien envoyé ; gardée, elle part dès que la clé de ce foyer est enregistrée (enregistrer la même clé à nouveau, ou un test réussi, oublie le foyer qui l'a acceptée).",
+  ),
+  stopTooMany: both(
+    'Turn off: not kept, and nothing could be sent now: 4 other fireplaces have a turn off kept, each still needed (lit, or the fireplace of the key): turn this one off at the fireplace.',
+    "Extinction : pas gardée, et rien n'a pu être envoyé maintenant : 4 autres foyers ont une extinction gardée, toutes encore nécessaires (allumés, ou le foyer de la clé) : éteignez celui-ci au foyer.",
+  ),
+  stopSentNotKept: both(
+    'Turn off sent once, not seen applied, and not kept: 4 other fireplaces have a turn off kept, each still needed: check this fireplace.',
+    'Extinction envoyée une fois, pas vue appliquée, et pas gardée : 4 autres foyers ont une extinction gardée, toutes encore nécessaires : vérifiez ce foyer.',
   ),
   stopClosed: both(
     'Turn off: nothing sent, the integration is stopping; kept in /data, it leaves at its next start.',

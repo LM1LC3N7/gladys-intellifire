@@ -144,6 +144,8 @@ function normalizeStop(raw, now) {
     // Never written: no resend can have been counted (a turn off that never left is never held).
     resends: raw.written === true ? (intIn(raw.resends, 0, 100) ?? 0) : 0,
     refused: raw.refused === true,
+    // The flame of its fireplace at its last read (true, false; null: never read).
+    lit: typeof raw.lit === 'boolean' ? raw.lit : null,
   };
 }
 

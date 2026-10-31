@@ -57,8 +57,10 @@ test/kit/                         gladys-testkit files, as is (clocks, loopback 
   the save), follows the configured address; let go only by a read of that serial showing it off or a
   newer turn on of that fireplace from Gladys, never by time nor by the turn off of another device. A
   403 is a challenge expired: "key refused" only on proof, for that serial only, never when the key is
-  known to be another fireplace's (accepted by it, or retrieved for it); a turn off is never signed
-  with such a key. After `shutdown()`: no request, no timer (a command refused, a turn off kept).
+  known to be another fireplace's (it accepted a post, its serial read on the line of that post, or
+  the key was retrieved for it); a turn off is never signed with such a key. Beyond 4 fireplaces, never
+  let go the turn off of the key's fireplace or of one read lit: the new one is not kept (sent once). After
+  `shutdown()`: no request, no timer (a command refused, a turn off kept).
 - **Turn on, flame height, fan, setpoint**: behind `allow_control`, decided on a fresh read, checked
   again in `beforeSend`; a turn on (and a setpoint) always sets the timer, or the fireplace is turned
   off; the session is watched by the reads (in /data, never lifted by time).

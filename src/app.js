@@ -53,17 +53,19 @@
 // proof only: a 403 is a challenge expired; that fireplace only), or when
 // the key is known to be another fireplace's (accepted by it, or retrieved
 // for it), it is kept (in /data) and leaves as soon as a key is saved (or a
-// test succeeds). Each fireplace (serial) has its own turn off kept (4 at
-// most), which follows the configured address; another serial at the
-// address gets nothing and never lets it go, nor does the turn off of
-// another device. Tried again every 250 ms for 3 s; not seen applied, it is
-// kept in /data and checked every 15 s (spaced up to 1 h while nothing can
-// leave): posted again while the flame is on (3 times at most, then held
-// and said in the status), let go when a read of its serial shows the fire
-// off (two reads in a row when it never left), or when a newer turn on of
-// that fireplace clicked in Gladys left. Never by time. After shutdown()
-// nothing is requested nor armed: a command is refused, a turn off kept in
-// /data for the next start.
+// test succeeds). A post accepted is credited only to the serial read on its
+// own line. Each fireplace (serial) has its own turn off kept (4 at most:
+// beyond, never the key's fireplace nor one read lit is let go; the new one
+// is then not kept, sent once), which follows the configured address;
+// another serial at the address gets nothing and never lets it go, nor does
+// the turn off of another device. Tried again every 250 ms for 3 s; not seen
+// applied, it is kept in /data and checked every 15 s (spaced up to 1 h
+// while nothing can leave): posted again while the flame is on (3 times at
+// most, then held and said in the status), let go when a read of its serial
+// shows the fire off (two reads in a row when it never left), or when a
+// newer turn on of that fireplace clicked in Gladys left. Never by time.
+// After shutdown() nothing is requested nor armed: a command is refused, a
+// turn off kept in /data for the next start.
 //
 // Clocks: `monotonic` paces everything in memory; the wall clock only dates
 // what /data keeps for the next process.
@@ -118,6 +120,16 @@ const RETRYABLE = [
 
 /** The last 4 digits of a serial, as the device name and the status show it. */
 const shortId = (serial) => serial.slice(-4).toUpperCase();
+
+/** What a read says of the flame: true (the flame or the thermostat on), false (both off), or undefined. */
+const litOf = (data) => {
+  if (!data) return undefined;
+  if (data.power === true || data.thermostat === true) return true;
+  if (data.power === false && (data.thermostat === false || data.hasThermostat === false)) {
+    return false;
+  }
+  return undefined;
+};
 
 const freshFireplace = () => ({
   serial: undefined,
@@ -193,6 +205,12 @@ export class IntelliFireApp {
      * lets one go.
      */
     this.stopGuards = [];
+    /**
+     * What the status says of the bound of the turn offs kept: `{ serial,
+     * kind: 'dropped' | 'refused' }`, 4 at most, until that fireplace has a
+     * turn off kept again or the configuration is saved.
+     */
+    this.stopNotices = [];
     this.checking = false;
     /**
      * The session of a turn on (or a setpoint) from Gladys, checked by the
@@ -207,7 +225,12 @@ export class IntelliFireApp {
      * refused; the other fireplaces are never concerned.
      */
     this.refusedBy = new Set();
-    /** Serials that accepted a post signed with the current key (a 403 then is a challenge). */
+    /**
+     * Serials that accepted a post signed with the current key, each read on
+     * the line of that post (right before or right after it): a 403 from
+     * them is a challenge expired. Forgotten when a key is saved (the same
+     * one too) or a test read succeeds.
+     */
     this.keyWorked = new Set();
     /** The serial the current key was retrieved for ("Retrieve the key"), in this run. */
     this.keyFor = undefined;
@@ -246,6 +269,28 @@ export class IntelliFireApp {
     if (!serial) return false;
     const owners = this.keyOwners();
     return owners.size > 0 && !owners.has(serial);
+  }
+
+  /**
+   * A post accepted on the line held: credited to the serial read on that
+   * line only (the read right before it, the read back right after it).
+   * No serial read, or two different ones: credited to nobody.
+   */
+  creditKey(...reads) {
+    const serials = new Set(reads.map((r) => r?.serial).filter(Boolean));
+    if (serials.size !== 1) return undefined;
+    const [serial] = serials;
+    this.keyWorked.add(serial);
+    return serial;
+  }
+
+  /**
+   * The owners deduced from accepted posts are forgotten (a key saved, the
+   * same one too; a test read that succeeds); the serial the key was
+   * retrieved for (the word of the cloud) only when another key is saved.
+   */
+  forgetKeyOwners() {
+    this.keyWorked.clear();
   }
 
   /**
@@ -359,6 +404,7 @@ export class IntelliFireApp {
       written: g.written,
       resends: g.resends,
       refused: g.refused,
+      lit: g.lit ?? null,
     }));
     if (JSON.stringify(stops) === JSON.stringify(this.memory.stops ?? [])) {
       return Promise.resolve(true);
@@ -384,7 +430,8 @@ export class IntelliFireApp {
       guard.written = kept.written;
       guard.resends = kept.resends;
       guard.refused = kept.refused;
-      this.addGuard(guard);
+      guard.lit = kept.lit ?? undefined;
+      if (!this.addGuard(guard)) continue;
       restored += 1;
     }
     if (restored === 0) {
@@ -604,13 +651,18 @@ export class IntelliFireApp {
     this.config = normalizeConfig(raw);
     const newKey = credentialsKey(previous) !== credentialsKey(this.config);
     if (newKey) {
-      // Another key: nothing known of whom it belongs to yet.
-      this.keyWorked.clear();
+      // Another key: nothing known of whom it belongs to.
       this.keyFor = undefined;
     }
     if (newKey || !reconnection) {
-      // Key or user id saved (the same ones too): a refusal is lifted, a turn off waiting leaves.
+      // Key or user id saved (the same ones too): the owners deduced are forgotten, a refusal
+      // is lifted, a turn off waiting leaves.
+      this.forgetKeyOwners();
       this.liftKeyRefusal();
+    }
+    if (!reconnection) {
+      // A configuration saved: the notes of the bound of the turn offs are read.
+      this.stopNotices = [];
     }
     if (this.config.pollInterval !== previous.pollInterval && this.fp.timer && !this.fp.running) {
       this.schedule(this.fp.online === false ? undefined : this.dueIn());
@@ -866,6 +918,10 @@ export class IntelliFireApp {
       const named = g.serial && (several || g.serial !== current);
       out = join(out, named ? T.ofFireplace(shortId(g.serial), note) : note);
     }
+    for (const n of this.stopNotices) {
+      const id = shortId(n.serial);
+      out = join(out, n.kind === 'dropped' ? T.stopDropped(id) : T.stopBoundRefused(id));
+    }
     if (current && this.refusedBy.has(current) && !this.guardFor(current)?.refused) {
       out = join(out, T.keyRefused);
     } else if (!this.config.credentials) {
@@ -1049,7 +1105,10 @@ export class IntelliFireApp {
       await f.running;
     } else if (this.dueIn() > 0) {
       // The last read (less than an interval ago) answers; a good one lifts a refused key too.
-      if (f.online === true) this.liftKeyRefusal();
+      if (f.online === true) {
+        this.forgetKeyOwners();
+        this.liftKeyRefusal();
+      }
       const last = this.status()[1];
       const next = T.nextRead(age(this.dueIn()));
       return Number.isFinite(this.lastAttemptAt)
@@ -1060,7 +1119,9 @@ export class IntelliFireApp {
       await this.tick();
     }
     if (f === this.fp && f.online === true) {
-      // A test read that succeeds lifts a refused key: the commands and a kept turn off try again.
+      // A test read that succeeds lifts a refused key and forgets the owners deduced:
+      // the commands and the turn offs kept try again.
+      this.forgetKeyOwners();
       this.liftKeyRefusal();
     }
     return this.status()[1];
@@ -1422,6 +1483,7 @@ export class IntelliFireApp {
     }
     this.logger.info(`IntelliFire: ${role}`);
     const [first, ...rest] = plan.steps;
+    let credited;
     try {
       await this.client.command(address, credentials, first.command, first.value, {
         until: answerBy - TIMINGS.applyWait,
@@ -1442,7 +1504,8 @@ export class IntelliFireApp {
           }
         },
       });
-      this.keyWorked.add(target.serial);
+      // The fresh read right before, on this line, showed this serial.
+      credited = this.keyWorked.has(target.serial) ? undefined : this.creditKey(fresh);
     } catch (err) {
       if (plan.session && (!entry.sent || clearRefusal(err))) {
         this.dropStartCheck();
@@ -1528,6 +1591,8 @@ export class IntelliFireApp {
     }
     this.followUp();
     if (back.serial !== target.serial) {
+      // Another serial read back on this line: the post is credited to nobody.
+      if (credited) this.keyWorked.delete(credited);
       this.markPending(role);
       throw this.refusal(ERRORS.sentUnconfirmed('serial'));
     }
@@ -1783,7 +1848,7 @@ export class IntelliFireApp {
           c.sentAt = this.lastSentAt;
         },
       });
-      this.keyWorked.add(c.serial);
+      // No read on this line: credited to nobody.
     } catch (err) {
       holder?.release();
       holder = undefined;
@@ -1834,19 +1899,62 @@ export class IntelliFireApp {
 
   /**
    * A new turn off kept: one per fireplace, `LIMITS.stopGuards` at most.
-   * Beyond, the oldest one of a fireplace that is neither this one nor the
-   * one read at the address is let go (logged).
+   * Beyond, one that may go is let go (`evictable`; said in the status and
+   * the logs); when none may, the new one is not kept: undefined.
    */
   addGuard(guard) {
-    this.stopGuards.push(guard);
-    while (this.stopGuards.length > LIMITS.stopGuards) {
-      const current = this.stopSerial();
-      const oldest =
-        this.stopGuards.find((g) => g !== guard && (!current || g.serial !== current)) ??
-        this.stopGuards[0];
-      this.dropGuard(oldest, `more than ${LIMITS.stopGuards} fireplaces with a turn off kept`);
+    while (this.stopGuards.length >= LIMITS.stopGuards) {
+      const victim = this.evictable(guard);
+      if (!victim) return undefined;
+      // Said in the status (set before the drop, which publishes it) and the logs.
+      if (victim.serial) this.notice(victim.serial, 'dropped');
+      this.dropGuard(victim, `more than ${LIMITS.stopGuards} fireplaces with a turn off kept`);
     }
+    this.stopGuards.push(guard);
+    if (guard.serial) this.notice(guard.serial, undefined);
     return guard;
+  }
+
+  /** Whether a turn off kept cannot leave with the key configured now. */
+  cannotLeave(guard) {
+    return !this.credentialsFor(guard.target) || guard.refused || this.keyIsOthers(guard.serial);
+  }
+
+  /**
+   * The turn off that may be let go for a new one: never the one of a
+   * fireplace the key belongs to, of a fireplace last read lit, nor of the
+   * fireplace read at the address; first those that cannot leave with the
+   * key configured, then those last read off, then those never read; the
+   * oldest first. Undefined when every one is needed.
+   */
+  evictable(guard) {
+    const owners = this.keyOwners();
+    const current = this.stopSerial();
+    const rank = (g) => (this.cannotLeave(g) ? 0 : g.lit === false ? 1 : 2);
+    return this.stopGuards
+      .filter(
+        (g) =>
+          g !== guard &&
+          g.lit !== true &&
+          !(g.serial && (owners.has(g.serial) || g.serial === current)),
+      )
+      .sort((a, b) => rank(a) - rank(b))[0];
+  }
+
+  /** A note of the status for `serial` (a turn off let go, or refused, by the bound); undefined clears it. */
+  notice(serial, kind) {
+    this.stopNotices = this.stopNotices.filter((n) => n.serial !== serial);
+    if (kind) this.stopNotices = [...this.stopNotices, { serial, kind }].slice(-LIMITS.stopGuards);
+  }
+
+  /** A turn off not kept: 4 others are, all needed (said in the ack, the status and the logs). */
+  refuseBound(serial) {
+    this.logger.warn(
+      `IntelliFire: a turn off not kept: ${LIMITS.stopGuards} other fireplaces have one, all needed`,
+    );
+    if (serial) this.notice(serial, 'refused');
+    this.updateStatus().catch(() => {});
+    return this.refusal(ERRORS.stopTooMany);
   }
 
   /** The turn offs kept follow their fireplace to the address configured now. */
@@ -1925,10 +2033,14 @@ export class IntelliFireApp {
    * /data, never awaited) and leaves at the next start of the integration.
    */
   keepClosed({ target, serial }) {
-    const guard = this.guardFor(serial) ?? this.addGuard(this.newStopGuard(target, serial));
+    const job = { target, serial, state: { written: false } };
+    const guard = this.guardFor(serial) ?? this.addGuard(this.newGuardFor(target, serial));
+    if (!guard) {
+      job.done = Promise.resolve({ error: this.refuseBound(serial) });
+      return job;
+    }
     if (!guard.serial && serial) guard.serial = serial;
     this.persistStop().catch(() => {});
-    const job = { target, serial, state: { written: false } };
     job.done = Promise.resolve({ error: this.refusal(ERRORS.stopClosed) });
     return job;
   }
@@ -2004,8 +2116,17 @@ export class IntelliFireApp {
       offReads: 0,
       forbidden: 0,
       watchUntil: -Infinity,
+      /** The flame of its fireplace at its last read: true, false, or undefined (never read). */
+      lit: undefined,
       timer: undefined,
     };
+  }
+
+  /** A new turn off for `serial`, with the flame of the last read when it is that fireplace's. */
+  newGuardFor(target, serial) {
+    const guard = this.newStopGuard(target, serial);
+    if (serial && this.fp.serial === serial) guard.lit = litOf(this.fp.data);
+    return guard;
   }
 
   /** Whether the last read of the address shows another fireplace than this turn off's. */
@@ -2046,6 +2167,11 @@ export class IntelliFireApp {
       // A turn off kept without serial (an older /data) is the one of the fireplace read.
       guard.serial = read.serial;
       this.persistStop().catch(() => {});
+    }
+    if (read?.serial && read.serial === guard.serial) {
+      // The flame of this fireplace as last read (a turn off of a fire read lit is never let go
+      // by the bound).
+      guard.lit = litOf(read) ?? guard.lit;
     }
     const off =
       read?.power === false && (read.thermostat === false || read.hasThermostat === false);
@@ -2153,7 +2279,11 @@ export class IntelliFireApp {
     const { target, state } = job;
     const retryUntil = Math.max(job.received, this.mono()) + TIMINGS.stopRetryFor;
     // One turn off per fireplace: a click for another serial never lets this one go.
-    const guard = this.guardFor(job.serial) ?? this.addGuard(this.newStopGuard(target, job.serial));
+    let guard = this.guardFor(job.serial) ?? this.addGuard(this.newGuardFor(target, job.serial));
+    // Four other turn offs kept, all needed: this one is never kept, but it is still tried
+    // within its 3 s when it can be signed and goes to its own fireplace.
+    const kept = Boolean(guard);
+    if (!kept) guard = this.newGuardFor(target, job.serial);
     guard.target = target;
     // A turn off kept without serial (an older /data) belongs to the device clicked.
     if (!guard.serial && job.serial) guard.serial = job.serial;
@@ -2167,6 +2297,17 @@ export class IntelliFireApp {
     // In /data before the first byte; a save that fails or hangs never holds it (200 ms at most).
     await this.bounded(this.persistStop(), TIMINGS.stopSaveWait);
     const credentials = this.credentialsFor(target);
+    if (
+      !kept &&
+      (this.otherAtAddress(guard) ||
+        !credentials ||
+        guard.refused ||
+        this.keyIsOthers(guard.serial))
+    ) {
+      // Not kept, and it cannot leave now: nothing posted (said in the ack and the status).
+      job.resolve({ error: this.refuseBound(job.serial) });
+      return;
+    }
     if (this.otherAtAddress(guard)) {
       // The last read at the address is another fireplace: nothing posted to it,
       // no refusal counted; the checks read the address and post once this one is back.
@@ -2210,7 +2351,7 @@ export class IntelliFireApp {
           state.written = true;
           const at = this.mono();
           this.lastSentAt = at;
-          if (this.hasGuard(guard)) {
+          if (!kept || this.hasGuard(guard)) {
             guard.written = true;
             guard.sentAt = at;
             guard.forbidden = 0;
@@ -2218,7 +2359,6 @@ export class IntelliFireApp {
           }
         });
         failure = undefined;
-        if (guard.serial ?? this.fp.serial) this.keyWorked.add(guard.serial ?? this.fp.serial);
         if (resendOnBoot && this.hasGuard(guard)) {
           guard.resends += 1;
         }
@@ -2237,6 +2377,8 @@ export class IntelliFireApp {
         } catch (err) {
           this.logger.debug(`IntelliFire: read back of the turn off failed (${errorReason(err)})`);
         }
+        // Posted blind: credited only to the serial read back on this line (none: nobody).
+        this.creditKey(back);
         break;
       } catch (err) {
         failure = err;
@@ -2292,7 +2434,13 @@ export class IntelliFireApp {
     let result;
     if (confirmed) {
       this.logger.info('IntelliFire: turn off confirmed by the fireplace');
+      // Applied: a note of the bound for this fireplace has nothing left to say.
+      if (!kept && job.serial) this.notice(job.serial, undefined);
       result = {};
+    } else if (!kept) {
+      // Tried once, not seen applied, never kept: said in the ack and the status.
+      const error = this.refuseBound(job.serial);
+      result = { error: state.written ? this.refusal(ERRORS.stopSentNotKept) : error };
     } else if (judged === 'other') {
       result = { error: this.refusal(ERRORS.stopOtherSerial) };
     } else if (judged === 'foreign') {
@@ -2389,14 +2537,14 @@ export class IntelliFireApp {
           guard.watchUntil = Math.max(guard.watchUntil, this.lastStartAt + TIMINGS.pendingFor);
           this.lastSentAt = guard.sentAt;
         });
-        if (guard.serial) this.keyWorked.add(guard.serial);
         // Accepted by the fireplace: a resend (a refusal or a silence is not one).
         if (wasWritten) guard.resends += 1;
-        await this.sleep(TIMINGS.applyWait, holder.signal);
-        if (!this.hasGuard(guard)) return;
+        let back;
         try {
+          await this.sleep(TIMINGS.applyWait, holder.signal);
+          if (!this.hasGuard(guard)) return;
           const backStart = this.mono();
-          const back = await this.client.poll(target, {
+          back = await this.client.poll(target, {
             timeoutMs: TIMINGS.readTimeout,
             signal: holder.signal,
           });
@@ -2411,6 +2559,9 @@ export class IntelliFireApp {
           }
         } catch (err) {
           if (err.kind === ERROR_KINDS.ABORTED) throw err;
+        } finally {
+          // Credited to the serial read on this line (before and after the post), else nobody.
+          this.creditKey(read, back);
         }
       })();
     } catch (err) {

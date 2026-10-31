@@ -54,6 +54,16 @@ Handoff document: what is done, what was decided, what comes next.
       after shutdown is refused before any request; a turn off then is kept in /data for the next
       start. M2 the two waits of an ack in `test/review-r2.test.js` bounded (`t.until`). M3 (M4 of
       r2) still in Next patch.
+- [x] **Review 4 fixes** (2026-10-31), tests in `test/review-r4.test.js`: B1 a post accepted is
+      credited only to the serial read on its own line (the read right before it, the read back right
+      after it; none, or two different: nobody), never to the turn off that sent it; a read back on
+      another serial withdraws the credit of a command; the timer posted again credits nobody; saving
+      the key (the same one too) or a test that succeeds forgets the owners deduced (the serial the
+      key was retrieved for only with another key). I1 beyond 4 fireplaces, never let go the turn off
+      of the key's fireplace, of one last read lit (kept in /data with each turn off) nor of the one
+      read at the address; first one that cannot leave with the key typed, then one read off, then one
+      never read; none may go: the new turn off is not kept but still sent once (within its 3 s) when
+      it can be signed and no other fireplace is read at the address; both said in the status. I2 ten 403s then a read without serial: tried again, never a refused key (test).
 - [ ] **Milestone 2 — real fireplace**: run against a real module (see "To check"), anonymized captures
       as fixtures.
 - [ ] **Milestone 3 — more**: light level command, pilot command, timer command, UDP discovery
@@ -75,10 +85,11 @@ Handoff document: what is done, what was decided, what comes next.
   known to be another fireplace's (review r3); that serial's turn off is then kept and leaves with a
   key saved, a test read that succeeds, or a new click; no automatic retry. The other fireplaces are
   never concerned.
-- One turn off kept per fireplace (serial), 4 at most (review r3): beyond, the oldest one of a
-  fireplace that is neither the one clicked nor the one read at the address is let go (logged). The
-  owner of the key (the serial that accepted it, or the one it was retrieved for) is kept in memory
-  only: binding it to the key in /data would need a fingerprint of the key (never written), and a
+- One turn off kept per fireplace (serial), 4 at most (reviews r3, r4): for a 5th, one is let go only
+  if it may be (never the key's fireplace, one last read lit, nor the one read at the address; first
+  one that cannot leave with the key typed); when none may, the new turn off is not kept (sent once
+  when it can be) rather than an old one abandoned. The owner of the key (the serial read on the line of a post it accepted, or
+  the one it was retrieved for) is kept in memory only: binding it to the key in /data would need a fingerprint of the key (never written), and a
   stale owner could hold back the turn off of the true one. After a restart, the turn off goes with
   the key typed until a post is accepted.
 - Flame height and setpoint refused while the fireplace is off (unknown whether they light it); the fan
