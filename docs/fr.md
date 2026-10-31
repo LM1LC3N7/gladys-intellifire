@@ -1,67 +1,107 @@
-# Template de démonstration
+# IntelliFire
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Intégration Gladys pour les foyers au gaz **IntelliFire** (Hearth & Home Technologies : Heat & Glo,
+Heatilator, Majestic, Monessen, Quadra-Fire) équipés du module Wi-Fi IFT, par l'**API locale** de ce
+module. Jamais testé avec un vrai foyer : construit et testé sur un faux module d'après la bibliothèque
+intellifire4py (celle de Home Assistant). Sans lien avec Hearth & Home Technologies.
+
+> Une flamme de gaz allumée à distance est un risque. N'autorisez l'allumage depuis Gladys que si
+> rien ne repose près du foyer et que personne ne peut être surpris par la flamme.
 
 ## Ce que vous obtenez
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+Un appareil par foyer, identifié par son numéro de série (jamais par son adresse IP) :
 
-## Configuration
+- état (texte), flamme allumée, veilleuse permanente, vitre chaude, température de la pièce (°C, telle
+  que le module la donne), mode thermostat, consigne du thermostat, minuterie restante (min),
+  niveau d'éclairage (0 à 3, lecture seule), défaut signalé et liste des défauts ;
+- **Éteindre** (bouton), jamais soumis à l'option ;
+- **Allumer** (bouton), **Hauteur de flamme** (1 à 5), **Vitesse du ventilateur** (arrêt, 1 à 4) et
+  **Consigne du thermostat** (°C entiers) : désactivés tant que l'option « Autoriser l'allumage, la
+  flamme, le ventilateur et la consigne » n'est pas cochée.
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+Aucun de ces réglages n'est un interrupteur : un « tout éteindre » (assistant vocal, scène) n'atteint
+jamais la flamme.
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+## Installation
 
-## Actions
+1. Donnez au module Wi-Fi du foyer une adresse fixe dans votre box.
+2. Saisissez cette adresse, enregistrez : le foyer est lu, l'appareil apparaît dans l'onglet Découverte.
+3. Pour les commandes (extinction comprise), il faut la **clé** du foyer et l'**identifiant
+   utilisateur** de votre compte IntelliFire : saisissez l'adresse e-mail et le mot de passe du
+   compte, enregistrez, puis cliquez sur **Récupérer la clé**. Gladys se connecte une seule fois au
+   cloud IntelliFire (iftapi.net, en HTTPS), prend la clé du foyer dont le numéro de série a été lu à
+   l'adresse et l'enregistre. Vous pouvez ensuite effacer le mot de passe. Vous pouvez aussi saisir
+   la clé et l'identifiant vous-même.
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+Le mot de passe, la clé et l'identifiant sont gardés par Gladys dans sa base, jamais réaffichés, jamais
+écrits dans les journaux ni dans /data. Le mot de passe n'est envoyé qu'à iftapi.net et seulement au
+clic ; l'identifiant n'est envoyé qu'au foyer ; la clé ne quitte pas Gladys (elle signe les commandes).
+Les lectures de l'API locale ne demandent aucun mot de passe : gardez le foyer sur un réseau de
+confiance.
 
-## Scènes
+## Lectures
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+Le foyer est lu toutes les 15 s par défaut (10 à 600 s), pas plus souvent, même après un redémarrage
+(l'heure de la dernière lecture est gardée dans /data), puis 5 s et 20 s après chaque commande. Une
+seule requête à la fois vers le module. Une valeur absente ou illisible n'est pas publiée (jamais comme 0) ; rien de plus vieux que 2 minutes n'est envoyé comme neuf.
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+## Éteindre
 
-## Tableau de bord
+Le bouton **Éteindre** envoie l'extinction (puissance 0), puis remet la consigne du thermostat à 0 (pour
+qu'aucun thermostat ne rallume la flamme). Il ne dépend ni de l'option, ni d'une lecture préalable, ni
+d'une pause demandée par le module, ni d'une commande en cours (il l'interrompt : une commande cliquée
+avant lui et pas encore partie est abandonnée), ni d'une lecture bloquée (il la coupe). Il part vers
+l'adresse saisie, ou celle de la dernière lecture gardée dans /data si la configuration n'est pas lue.
 
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+L'extinction ne peut pas partir, et elle est **gardée** (dans /data) jusqu'à ce qu'elle parte, dans ces
+cas exactement :
 
-## Dépannage
+- aucune adresse connue (ni saisie, ni gardée) : refusée, rien n'est gardé ;
+- pas de clé ou d'identifiant valides : elle part dès qu'ils sont enregistrés (bouton ou saisie) ;
+- le foyer refuse la clé ou l'identifiant (HTTP 403, deux fois avec un nouveau défi) : elle n'est plus
+  essayée d'elle-même ; elle part dès qu'une nouvelle clé est enregistrée, à une lecture réussie par le
+  bouton « Tester la connexion », ou à un nouveau clic ;
+- après un redémarrage, elle attend la lecture de la configuration (la clé est un secret, jamais dans
+  /data) ;
+- le module ne répond pas : essayée toutes les 250 ms pendant 3 s, puis toutes les 15 s.
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+Une extinction est confirmée seulement par une lecture qui montre la flamme éteinte et le thermostat
+arrêté. Sinon elle est relue toutes les 15 s et renvoyée tant que la flamme est allumée, 3 fois au plus ;
+ensuite elle est retenue (dit dans le statut) sans nouvel envoi jusqu'à un nouveau clic. Elle est
+levée par une lecture montrant le foyer éteint (deux lectures de suite si elle n'est jamais partie), ou
+par un allumage cliqué ensuite depuis Gladys avec l'option ; jamais par le temps.
+
+## Allumer, flamme, ventilateur, consigne
+
+Désactivés par défaut. Avec l'option, chaque commande lit d'abord le foyer (lecture fraîche, jamais
+l'état en mémoire) et vérifie de nouveau l'option juste avant chaque envoi. **Allumer** envoie la
+flamme puis, aussitôt, une **minuterie** (60 min par défaut, 10 à 180) : le foyer s'éteint de lui-même
+à son terme. Si la minuterie ne peut pas être posée, Gladys éteint le foyer aussitôt ; si les lectures
+des deux minutes suivantes montrent la flamme sans cette minuterie, Gladys l'éteint aussi.
+
+Une commande est refusée, sans rien envoyer, quand :
+
+- l'option est décochée, ou la configuration pas encore lue ;
+- la clé ou l'identifiant manquent, ou le foyer les a refusés ;
+- une autre commande est en cours, une extinction est en cours d'envoi, ou (sauf pour Allumer) une
+  extinction est gardée ;
+- le module a demandé d'attendre (HTTP 429 ou 503) ;
+- la lecture fraîche échoue ou ne vient pas à temps (la commande doit partir dans les 3,5 s) ;
+- le foyer lu n'est pas cet appareil (autre numéro de série) ;
+- une valeur nécessaire manque à la lecture ;
+- Allumer : un défaut qui désactive le foyer est signalé (veilleuse, flamme, appareil désactivé,
+  verrouillage, hors ligne, ECM hors ligne, ou un code inconnu), ou /data ne peut pas être écrit ;
+- Hauteur de flamme et Consigne : le foyer est éteint (Gladys ne les envoie pas à un foyer éteint) ;
+- Ventilateur : le foyer n'a pas de ventilateur ; Consigne : il n'a pas de thermostat ;
+- la valeur sort des bornes : hauteur 1 à 5, ventilateur 0 à 4, consigne de 5 °C à la « consigne la
+  plus haute » (26 °C par défaut, 37 °C au plus, la limite de l'API).
+
+Une commande est réussie seulement si la relecture montre la valeur demandée ; sinon Gladys répond
+« envoyé, pas encore appliqué », « envoyé, sans confirmation » ou « rien envoyé », selon ce qui s'est
+passé.
+
+## Statut
+
+L'écran de configuration dit l'état du foyer, une extinction gardée ou retenue, une clé refusée ou
+absente, un module injoignable (prochain essai), une pause demandée par le module.

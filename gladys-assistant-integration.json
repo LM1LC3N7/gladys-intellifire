@@ -1,177 +1,238 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "IntelliFire",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "IntelliFire gas fireplaces on the local network: flame, fan, thermostat; turn off.",
+    "fr": "Foyers au gaz IntelliFire en réseau local : flamme, ventilateur, thermostat ; extinction."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-intellifire:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-intellifire/main/cover.png",
+  "categories": ["climate"],
+  "transports": ["local"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your IntelliFire fireplace",
+        "fr": "Votre foyer IntelliFire"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Shows an IntelliFire gas fireplace (Hearth & Home Technologies, with its IFT Wi-Fi module) in Gladys through the local API of its module: flame, pilot, glass hot, room temperature, thermostat, timer, light level, faults. Turning off does not depend on the option below; turning on, the flame height, the fan and the setpoint stay off until you allow them, and every turn on from Gladys sets a timer. Commands are signed with the key of your IntelliFire account: type it, or let the button below fetch it once. Enter the address of the fireplace, save, then add it from the Discovery tab. A gas flame lit from afar is a hazard: never light it without making sure nothing lies near it. Never tested with a real device. Not affiliated with Hearth & Home Technologies.",
+        "fr": "Affiche un foyer au gaz IntelliFire (Hearth & Home Technologies, avec son module Wi-Fi IFT) dans Gladys par l'API locale de son module : flamme, veilleuse, vitre chaude, température de la pièce, thermostat, minuterie, éclairage, défauts. L'extinction ne dépend pas de l'option ci-dessous ; l'allumage, la hauteur de flamme, le ventilateur et la consigne restent désactivés tant que vous ne les autorisez pas, et chaque allumage depuis Gladys pose une minuterie. Les commandes sont signées avec la clé de votre compte IntelliFire : saisissez-la, ou laissez le bouton ci-dessous la récupérer une fois. Saisissez l'adresse du foyer, enregistrez, puis ajoutez-le depuis l'onglet Découverte. Une flamme de gaz allumée à distance est un risque : ne l'allumez jamais sans vous assurer que rien ne repose à proximité. Jamais testé avec un vrai appareil. Sans lien avec Hearth & Home Technologies."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-intellifire/blob/main/docs/fr.md",
+          "label": {
+            "en": "Guide (French)",
+            "fr": "Guide (français)"
+          }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-intellifire/blob/main/docs/en.md",
+          "label": {
+            "en": "Guide (English)",
+            "fr": "Guide (anglais)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+      "key": "address",
+      "type": "string",
+      "label": {
+        "en": "Address of the fireplace",
+        "fr": "Adresse du foyer"
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
+      "description": {
+        "en": "The IPv4 address of its Wi-Fi module (best kept fixed in your router) or its host name, optionally followed by \":port\" (80 by default). The local API has no password for the reads: keep the fireplace on a trusted network.",
+        "fr": "L'adresse IPv4 de son module Wi-Fi (à fixer de préférence dans votre box) ou son nom d'hôte, suivi éventuellement de « :port » (80 par défaut). L'API locale n'a pas de mot de passe pour les lectures : gardez le foyer sur un réseau de confiance."
+      },
+      "placeholder": {
+        "en": "192.168.1.69",
+        "fr": "192.168.1.69"
+      },
       "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "default": ""
     },
     {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+      "key": "api_key",
+      "type": "secret",
+      "label": {
+        "en": "Key of the fireplace",
+        "fr": "Clé du foyer"
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
+      "description": {
+        "en": "The \"apikey\" of this fireplace in your IntelliFire account (hex digits), filled in by the \"Retrieve the key\" button or typed. Kept by Gladys in its database, never shown again, never sent anywhere: it only signs the commands sent to the fireplace.",
+        "fr": "La « apikey » de ce foyer dans votre compte IntelliFire (caractères hexadécimaux), remplie par le bouton « Récupérer la clé » ou saisie. Gardée par Gladys dans sa base, jamais réaffichée, jamais envoyée nulle part : elle sert seulement à signer les commandes envoyées au foyer."
+      },
+      "required": false
+    },
+    {
+      "key": "user_id",
+      "type": "secret",
+      "label": {
+        "en": "User id of the account",
+        "fr": "Identifiant utilisateur du compte"
+      },
+      "description": {
+        "en": "The user id of your IntelliFire account, filled in with the key. Kept by Gladys in its database, never shown again, sent only to the fireplace with each command.",
+        "fr": "L'identifiant utilisateur de votre compte IntelliFire, rempli avec la clé. Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement au foyer avec chaque commande."
+      },
+      "required": false
+    },
+    {
+      "key": "username",
+      "type": "string",
+      "label": {
+        "en": "E-mail address of the IntelliFire account",
+        "fr": "Adresse e-mail du compte IntelliFire"
+      },
+      "description": {
+        "en": "Only for the \"Retrieve the key\" button (the account of the IntelliFire app).",
+        "fr": "Seulement pour le bouton « Récupérer la clé » (le compte de l'application IntelliFire)."
+      },
+      "placeholder": {
+        "en": "name@example.com",
+        "fr": "nom@exemple.fr"
+      },
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "password",
+      "type": "secret",
+      "label": {
+        "en": "Password of the IntelliFire account",
+        "fr": "Mot de passe du compte IntelliFire"
+      },
+      "description": {
+        "en": "Kept by Gladys in its database, never shown again, sent only to the IntelliFire cloud (iftapi.net, over HTTPS), and only when you click \"Retrieve the key\". You may erase it once the key is retrieved.",
+        "fr": "Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement au cloud IntelliFire (iftapi.net, en HTTPS), et seulement quand vous cliquez sur « Récupérer la clé ». Vous pouvez l'effacer une fois la clé récupérée."
+      },
+      "required": false
+    },
+    {
+      "key": "allow_control",
+      "type": "boolean",
+      "label": {
+        "en": "Allow turning on, the flame, the fan and the setpoint",
+        "fr": "Autoriser l'allumage, la flamme, le ventilateur et la consigne"
+      },
+      "description": {
+        "en": "Off by default. On: the \"Turn on\" button, the flame height, the fan speed and the thermostat setpoint may be sent, after a fresh read of the fireplace (the guide lists every refusal). Off: they refuse every request. Turning off does not depend on this option.",
+        "fr": "Désactivé par défaut. Activé : le bouton « Allumer », la hauteur de flamme, la vitesse du ventilateur et la consigne du thermostat peuvent être envoyés, après une lecture fraîche du foyer (le guide liste tous les refus). Désactivé : ils refusent toute demande. L'extinction ne dépend pas de cette option."
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "session_duration",
+      "type": "number",
+      "label": {
+        "en": "Timer of a turn on (min)",
+        "fr": "Minuterie d'un allumage (min)"
+      },
+      "description": {
+        "en": "Set right after every turn on from Gladys: the fireplace turns itself off at its end (60 min by default, 10 to 180). Without it, Gladys turns the fireplace off.",
+        "fr": "Posée juste après chaque allumage depuis Gladys : le foyer s'éteint de lui-même à son terme (60 min par défaut, de 10 à 180). Sans elle, Gladys éteint le foyer."
+      },
+      "required": false,
+      "default": 60,
+      "min": 10,
       "max": 180
     },
     {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
+      "key": "max_temperature",
       "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Highest setpoint (°C)",
+        "fr": "Consigne la plus haute (°C)"
+      },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "Gladys never asks for more (26 °C by default; 37 °C, the limit of the API, at most; 5 °C at least).",
+        "fr": "Gladys ne demande jamais plus (26 °C par défaut ; 37 °C, la limite de l'API, au plus ; 5 °C au moins)."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": 26,
+      "min": 5,
+      "max": 37
+    },
+    {
+      "key": "poll_interval",
+      "type": "number",
+      "label": {
+        "en": "Refresh interval (s)",
+        "fr": "Intervalle de rafraîchissement (s)"
+      },
+      "description": {
+        "en": "How often the fireplace is read, in seconds (not more often after a restart; read again 5 s and 20 s after each command).",
+        "fr": "Fréquence de lecture du foyer, en secondes (pas plus souvent après un redémarrage ; relu 5 s et 20 s après chaque commande)."
+      },
+      "required": false,
+      "default": 15,
+      "min": 10,
+      "max": 600
+    },
+    {
+      "key": "language",
+      "type": "select",
+      "label": {
+        "en": "Language of the feature names",
+        "fr": "Langue des noms des fonctionnalités"
+      },
+      "description": {
+        "en": "Used for the feature names of the devices added from now on, for the state texts and for the command errors.",
+        "fr": "Sert aux noms des fonctionnalités des appareils ajoutés désormais, aux textes d'état et aux erreurs des commandes."
+      },
+      "required": false,
+      "default": "fr",
+      "options": [
+        {
+          "value": "fr",
+          "label": {
+            "en": "French",
+            "fr": "Français"
+          }
+        },
+        {
+          "value": "en",
+          "label": {
+            "en": "English",
+            "fr": "Anglais"
+          }
+        }
+      ]
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
+      "key": "test_connection",
+      "label": {
+        "en": "Test the connection",
+        "fr": "Tester la connexion"
+      },
+      "description": {
+        "en": "Reads the fireplace once, unless it was read less than one interval ago (then shows that read).",
+        "fr": "Lit le foyer une fois, sauf s'il a été lu il y a moins d'un intervalle (affiche alors cette lecture)."
+      },
       "timeout_seconds": 30
     },
     {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
-      "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
+      "key": "fetch_key",
+      "label": {
+        "en": "Retrieve the key",
+        "fr": "Récupérer la clé"
       },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
-          "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
-        }
-      ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
       "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
+        "en": "Signs in once to the IntelliFire cloud with the e-mail address and password above, and saves the key and user id of the fireplace read at the address. One try per click.",
+        "fr": "Se connecte une fois au cloud IntelliFire avec l'adresse e-mail et le mot de passe ci-dessus, et enregistre la clé et l'identifiant du foyer lu à l'adresse. Un essai par clic."
       },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
+      "timeout_seconds": 60
     }
   ]
 }

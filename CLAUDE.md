@@ -15,62 +15,48 @@ its only runtime dependency. It started from the official JavaScript template.
 
 ```bash
 npm install
-npm test                                  # node --test, the built-in runner
-node --test test/devices.test.js          # one file
-node --test --test-name-pattern "plug"    # tests whose name matches
+npm test                                  # node --test --test-timeout=60000
+node --test test/stop.test.js             # one file
 npm run lint                              # ESLint
 npm run format:check                      # Prettier, as the CI runs it
-npm run format                            # Prettier, fix in place
 npx github:GladysAssistant/integration-store .   # store admission checks
 ```
-
-The CI (`.github/workflows/ci.yml`) runs `format:check`, `lint` and `test` on
-Node 22 and 24, and builds the Docker image: run the three commands before
-pushing.
 
 ## Architecture
 
 ```
-index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
+index.js                          SDK wiring only; a turn off kept in /data restored at boot
+src/handlers.js                   SDK handlers -> IntelliFireApp (shared with the tests)
+src/app.js                        polling, device, states, status, commands, the turn off, the key button
+src/lane.js                       one HTTP exchange at a time; the turn off first (it aborts the holder)
+src/devices.js                    device and states (pure); feature roles are frozen
+src/intellifire/client.js         /poll, and a command = challenge + signed post (403 retried once)
+src/intellifire/model.js          strict parsers of /poll and the challenge, the signature
+src/intellifire/http.js           one bounded HTTP exchange (node:http), `beforeSend`, abort, error kinds
+src/intellifire/cloud.js          iftapi.net sign-in and fireplace list, for the "Retrieve the key" button only
+src/store.js                      /data/intellifire-state.json: target, last read, turn off, start check, pause; no secret
+src/publisher.js                  states to Gladys within 300 per minute, nothing older than 2 minutes
 src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
-gladys-assistant-integration.json manifest: name, config_schema, actions, image...
-docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
-test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
-.github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
+src/i18n.js                       English and French runtime texts
+scripts/cover.mjs                 cover.png generator (plain Node, no dependency)
+test/                             node --test, the SDK's fake Gladys and test/fixtures/fakeFireplace.js
+test/kit/                         gladys-testkit files, as is (clocks, loopback servers)
 ```
 
 ## Rules
 
-- **External ids are forever.** Build them with
-  `gladys.externalIds(type, platformId)`, `platformId` being the unique id the
-  platform gives the device (serial, cloud id, MAC), never a label. Gladys keys
-  devices, their history, scenes and dashboards on them: changing one creates a
-  new device and orphans the old one. The same goes for every key users store:
-  manifest `config_schema`, `actions`, widget and scene keys, feature keys.
-- **The container rootfs is read-only.** Write only under `/data`, the one
-  writable volume. Never log tokens, passwords or API keys.
-- **Versions belong to the Release workflow** (Actions → Release). Never edit
-  `version` in `package.json` or in the manifest, nor the `docker_image` tag,
-  by hand — except on the README's hand-pushed tag path, which bumps all three
-  together before tagging. `test/manifest.test.js` checks they agree.
-- **Changelog.** Every user-visible change adds a line under `## [Unreleased]`
-  in `CHANGELOG.md` (`### Added`, `Changed`, `Fixed`, `Removed`, `Security`).
-  Never write a version heading: the Release workflow moves the section, and it
-  becomes the notes of the GitHub Release.
-- **Manifest.** Texts are multi-language objects `{ "en": ..., "fr": ... }`:
-  `label`, `description` and `placeholder` alike, never a plain string. The
-  catalog `description` holds 10 to 100 characters per language. A field the
-  older cores do not know needs a higher `gladys_version` minimum
-  (`categories`: 4.86.0; `widgets`, `scene_triggers`, `scene_actions`,
-  `type: "provider"`: 5.1.0). `test/manifest.test.js` ties the manifest to the
-  code (defaults, action, scene and widget handlers): change both sides
-  together.
-- **User-facing text** is bilingual (English and French): action messages,
-  manifest texts, and `docs/en.md` / `docs/fr.md`, kept in sync.
-- **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
-  in English. Tests never touch the network.
+- **External ids are forever.** Device `gladys.externalIds('intellifire', serial)`, the serial of
+  `/poll` in lower case, never the address. Feature roles in `FEATURES` of `src/constants.js`, manifest
+  keys (`address`, `api_key`, `user_id`, `username`, `password`, `allow_control`, `session_duration`,
+  `max_temperature`, `poll_interval`, `language`, actions `test_connection`, `fetch_key`).
+- **Secrets** (key, user id, password, e-mail address): never logged, never in /data, a status or an
+  error. A `secret` field is "kept by Gladys in its database, never shown again", never "encrypted".
+- **No switch, no writable binary**: turn on and off are buttons, the flame height and the fan selects.
+- **The turn off**: never behind the option, a read, a command, a pause or a missing configuration; it
+  aborts what holds the line; kept in /data (200 ms at most for the save); let go only by a read
+  showing it off or a newer turn on from Gladys, never by time.
+- **Turn on, flame height, fan, setpoint**: behind `allow_control`, decided on a fresh read, checked
+  again in `beforeSend`; a turn on always sets the timer, or the fireplace is turned off.
+- **One HTTP exchange at a time** (`src/lane.js`).
+- **Clocks**: the monotonic clock for every decision in memory; the wall clock only for /data.
+- **Changelog** under `## [Unreleased]`; user-facing texts in English and French; docs in sync.
