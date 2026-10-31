@@ -74,6 +74,7 @@ import {
   FLAME,
   PRESSED,
   SECOND,
+  SESSION,
   TEMPERATURE,
   TIMINGS,
 } from './constants.js';
@@ -194,6 +195,8 @@ export class IntelliFireApp {
     this.keyWorked = new Set();
     /** Monotonic time of the last click of "Retrieve the key". */
     this.cloudAt = -Infinity;
+    /** Set by shutdown(): no request nor timer any more. */
+    this.closed = false;
   }
 
   mono() {
@@ -417,7 +420,15 @@ export class IntelliFireApp {
 
   /** The container stops: every timer (the turn off is in /data), and /data written. */
   async shutdown() {
+    // Closed: nothing is requested nor armed any more (a test that stops the app
+    // in flight ends; in the container the process exits).
+    this.closed = true;
+    this.lane.holder?.controller.abort();
     this.stop();
+    if (this.configTimer) {
+      this.timers.clearTimeout(this.configTimer);
+      this.configTimer = undefined;
+    }
     if (this.stopGuard?.timer) {
       this.timers.clearTimeout(this.stopGuard.timer);
       this.stopGuard.timer = undefined;
@@ -461,7 +472,7 @@ export class IntelliFireApp {
           this.stopGuard ? TIMINGS.configRetryStop : TIMINGS.configRetry,
         );
       };
-      retry();
+      if (!this.closed) retry();
       const known = this.gladys.config;
       if (!this.configRead && known && typeof known === 'object' && Object.keys(known).length > 0) {
         // The configuration the SDK read just before 'connected': used meanwhile.
@@ -596,6 +607,7 @@ export class IntelliFireApp {
   schedule(delay) {
     const f = this.fp;
     this.clearTimer();
+    if (this.closed) return;
     const mono = this.mono();
     let wait;
     if (this.paused) {
@@ -620,6 +632,7 @@ export class IntelliFireApp {
   /** One read at a time: a tick during a read joins it. */
   tick() {
     const f = this.fp;
+    if (this.closed) return Promise.resolve();
     if (!f.running) {
       f.running = this.run().finally(() => {
         f.running = undefined;
@@ -642,7 +655,7 @@ export class IntelliFireApp {
 
   async run() {
     const generation = this.generation;
-    if (!this.config.address) {
+    if (!this.config.address || this.closed) {
       return;
     }
     if (this.paused) {
@@ -1059,7 +1072,7 @@ export class IntelliFireApp {
     }
     if (target.role === FEATURES.TURN_OFF) {
       // Never held back: whatever the value, the option, a read or a command.
-      return this.protect(received);
+      return this.protect(received, target.serial);
     }
     if (!this.config.allowControl) {
       throw this.refusal(ERRORS.disabled);
@@ -1140,7 +1153,7 @@ export class IntelliFireApp {
           { command: COMMANDS.POWER, value: 1 },
           { command: COMMANDS.TIMER, value: seconds },
         ],
-        session: true,
+        session: { minutes: this.config.sessionMinutes, timerSeen: false },
         expect: (back) =>
           back.power === true &&
           back.timer === true &&
@@ -1182,13 +1195,27 @@ export class IntelliFireApp {
     const same = (s) => s?.on === true && s.celsius === wanted;
     if (same(fresh.setpoint) && !this.isPending(role)) return undefined;
     // The thermostat mode has no 9 h safety shutdown of its own (intellifire4py
-    // issue 312): the timer of the session first, the setpoint after it.
+    // issue 312): the timer of the session first, the setpoint after it. A
+    // timer already running and not longer than the session is kept (never
+    // lengthened); the session then ends with it.
+    const seconds = this.config.sessionMinutes * 60;
+    const running =
+      fresh.timer === true &&
+      fresh.timeLeft !== undefined &&
+      fresh.timeLeft > 0 &&
+      fresh.timeLeft <= seconds;
+    const setpointStep = { command: COMMANDS.SETPOINT, value: wanted * 100 };
     return {
-      steps: [
-        { command: COMMANDS.TIMER, value: this.config.sessionMinutes * 60 },
-        { command: COMMANDS.SETPOINT, value: wanted * 100 },
-      ],
-      session: true,
+      steps: running ? [setpointStep] : [{ command: COMMANDS.TIMER, value: seconds }, setpointStep],
+      session: running
+        ? {
+            minutes: Math.min(
+              this.config.sessionMinutes,
+              Math.max(SESSION.min, Math.ceil(fresh.timeLeft / 60)),
+            ),
+            timerSeen: true,
+          }
+        : { minutes: this.config.sessionMinutes, timerSeen: false },
       expect: (back) => same(back.setpoint),
       before: (back) => JSON.stringify(back.setpoint) === JSON.stringify(fresh.setpoint),
       setpoint: true,
@@ -1281,9 +1308,9 @@ export class IntelliFireApp {
       const previous = this.memory.start;
       this.memory.start = {
         since: this.now(),
-        minutes: this.config.sessionMinutes,
+        minutes: plan.session.minutes,
         serial: target.serial,
-        timerSeen: false,
+        timerSeen: plan.session.timerSeen,
         reposted: false,
         thermostat: Boolean(plan.setpoint),
       };
@@ -1319,7 +1346,7 @@ export class IntelliFireApp {
             this.lastStartAt = this.lastSentAt;
           }
           if (plan.session) {
-            this.armSession(target.serial, Boolean(plan.setpoint));
+            this.armSession(target.serial, Boolean(plan.setpoint), plan.session);
           }
         },
       });
@@ -1341,11 +1368,20 @@ export class IntelliFireApp {
     for (const step of rest) {
       // Posted whatever the deadline of the ack; only a turn off clicked meanwhile stops it.
       try {
+        const sensitive = role !== FEATURES.TURN_ON;
         await this.client.command(address, credentials, step.command, step.value, {
-          until: Math.max(answerBy, this.mono() + 2 * SECOND),
+          // The timer of a turn on goes whatever the deadline of the ack (it only
+          // ends the fire); a setpoint has the deadline and checks of a first post.
+          until: sensitive
+            ? answerBy - TIMINGS.applyWait
+            : Math.max(answerBy, this.mono() + 2 * SECOND),
           signal: holder.signal,
           beforeSend: () => {
             if (entry.seq !== this.protectSeq) throw this.refusal(ERRORS.stopMeanwhile);
+            if (sensitive) {
+              this.checkCommand(generation, entry);
+              if (this.mono() > sendBy) throw this.refusal(ERRORS.tooSlow);
+            }
             this.lastSentAt = this.mono();
           },
         });
@@ -1489,6 +1525,7 @@ export class IntelliFireApp {
       this.timers.clearTimeout(handle);
     }
     f.followUps.clear();
+    if (this.closed) return;
     for (const delay of TIMINGS.followUps) {
       const handle = this.timers.setTimeout(() => {
         f.followUps.delete(handle);
@@ -1505,13 +1542,14 @@ export class IntelliFireApp {
   // --- The session of a turn on (or a setpoint) from Gladys ----------------------
 
   /** Armed right before the first byte of a turn on or of the timer of a setpoint. */
-  armSession(serial, thermostat) {
+  armSession(serial, thermostat, { minutes, timerSeen }) {
+    if (this.closed) return;
     const c = {
       since: this.now(),
       sentAt: this.mono(),
-      minutes: this.config.sessionMinutes,
+      minutes,
       serial,
-      timerSeen: false,
+      timerSeen,
       reposted: false,
       thermostat,
     };
@@ -1623,6 +1661,7 @@ export class IntelliFireApp {
 
   /** The timer of a session posted once more (a module may ignore it while it lights). */
   async repostTimer(c) {
+    if (this.closed) return;
     const target = this.stopTarget();
     const credentials = target && this.credentialsFor(target);
     if (!credentials) {
@@ -1692,7 +1731,7 @@ export class IntelliFireApp {
   }
 
   /** The turn off clicked: queued before anything, answered by 4.3 s after the click. */
-  async protect(received) {
+  async protect(received, serial) {
     // Every command that arrived before this turn off and has not left gives way.
     this.protectSeq += 1;
     this.dropStartCheck();
@@ -1706,7 +1745,8 @@ export class IntelliFireApp {
       // A new click: a turn off held or refused is tried again, in full.
       this.stopGuard.refused = false;
     }
-    const job = this.queueStop({ target, received, serial: this.stopSerial() });
+    // The turn off belongs to the device clicked (its serial), never to the last fireplace read.
+    const job = this.queueStop({ target, received, serial: serial ?? this.stopSerial() });
     const answerIn = Math.max(0, received + TIMINGS.commandAnswerBy - this.mono());
     let timer;
     const outcome = await new Promise((resolve) => {
@@ -1725,6 +1765,12 @@ export class IntelliFireApp {
 
   /** Queues a turn off; a click for the same target still waiting is joined. */
   queueStop({ target, received, fromBoot = false, serial }) {
+    if (this.closed) {
+      // Closed: nothing leaves any more (the turn off kept in /data goes at the next start).
+      const closed = { target, state: { written: false } };
+      closed.done = Promise.resolve({ error: this.refusal(ERRORS.stopPending) });
+      return closed;
+    }
     let job = this.stops.find((j) => !j.running && sameAddress(j.target, target));
     if (job) {
       return job;
@@ -1746,6 +1792,11 @@ export class IntelliFireApp {
       try {
         while (this.stops.length > 0) {
           const job = this.stops[0];
+          if (this.closed) {
+            job.resolve({ error: this.refusal(ERRORS.stopPending) });
+            this.stops.shift();
+            continue;
+          }
           job.running = true;
           try {
             await this.sendStop(job);
@@ -1764,7 +1815,7 @@ export class IntelliFireApp {
   /** A turn off kept that may leave now (key known, not refused): queued, else checked. */
   resumeStop() {
     const guard = this.stopGuard;
-    if (!guard) return;
+    if (!guard || this.closed) return;
     this.followAddress();
     const ready =
       this.credentialsFor(guard.target) &&
@@ -1795,7 +1846,7 @@ export class IntelliFireApp {
       otherSerial: false,
       applied: false,
       offReads: 0,
-      failures: 0,
+      forbidden: 0,
       watchUntil: -Infinity,
       timer: undefined,
     };
@@ -1926,16 +1977,32 @@ export class IntelliFireApp {
     }
     const guard = this.stopGuard;
     guard.target = target;
+    if (!guard.serial && job.serial) guard.serial = job.serial;
     if (!job.fromBoot) {
       guard.since = this.now();
       guard.resends = 0;
       guard.refused = false;
-      guard.failures = 0;
+      guard.forbidden = 0;
     }
     guard.watchUntil = Math.max(guard.watchUntil, this.lastStartAt + TIMINGS.pendingFor);
     // In /data before the first byte; a save that fails or hangs never holds it (200 ms at most).
     await this.bounded(this.persistStop(), TIMINGS.stopSaveWait);
     const credentials = this.credentialsFor(target);
+    if (
+      guard.serial &&
+      this.fp.serial &&
+      this.fp.serial !== guard.serial &&
+      sameAddress(target, this.config.address)
+    ) {
+      // The last read at the address is another fireplace: nothing posted to it,
+      // no refusal counted; the checks read the address and post once this one is back.
+      guard.otherSerial = true;
+      this.armStopCheck();
+      this.persistStop().catch(() => {});
+      this.updateStatus().catch(() => {});
+      job.resolve({ error: this.refusal(ERRORS.stopOtherSerial) });
+      return;
+    }
     if (!credentials || guard.refused) {
       // Nothing can sign it: kept, it leaves when a key is saved; the reads watch it.
       this.armStopCheck();
@@ -1964,7 +2031,7 @@ export class IntelliFireApp {
           if (this.stopGuard === guard) {
             guard.written = true;
             guard.sentAt = at;
-            guard.failures = 0;
+            guard.forbidden = 0;
             guard.watchUntil = Math.max(guard.watchUntil, this.lastStartAt + TIMINGS.pendingFor);
           }
         });
@@ -2014,7 +2081,7 @@ export class IntelliFireApp {
         failure.kind === ERROR_KINDS.AUTH ||
         failure.kind === ERROR_KINDS.CHALLENGE ||
         (failure.kind === ERROR_KINDS.HTTP && failure.status >= 500);
-      if (!again || this.mono() + TIMINGS.stopRetry >= retryUntil) {
+      if (!again || this.closed || this.mono() + TIMINGS.stopRetry >= retryUntil) {
         break;
       }
       await this.sleep(TIMINGS.stopRetry);
@@ -2030,7 +2097,8 @@ export class IntelliFireApp {
     }
     const decision = back === undefined ? undefined : this.decideStop(guard, back, Infinity);
     const confirmed = decision === 'done' || decision === 'watch';
-    if (!state.written && this.stopGuard === guard) guard.failures += 1;
+    const forbidden = failure?.kind === ERROR_KINDS.AUTH || failure?.kind === ERROR_KINDS.CHALLENGE;
+    if (forbidden && !state.written && this.stopGuard === guard) guard.forbidden += 1;
     if (this.stopGuard === guard) {
       if (decision === 'done') {
         this.dropStopGuard('applied');
@@ -2078,7 +2146,7 @@ export class IntelliFireApp {
    */
   async runCheck() {
     const guard = this.stopGuard;
-    if (!guard) return;
+    if (!guard || this.closed) return;
     if (this.checkMustYield() || this.checking) {
       this.armStopCheck(SECOND);
       return;
@@ -2087,6 +2155,7 @@ export class IntelliFireApp {
     let decision;
     let written = false;
     let attempted = false;
+    let forbiddenFailure = false;
     let undo;
     const target = guard.target;
     const credentials = this.credentialsFor(target);
@@ -2135,7 +2204,7 @@ export class IntelliFireApp {
           this.logger.warn('IntelliFire: the flame is still on after a turn off: posted again');
           written = true;
           guard.written = true;
-          guard.failures = 0;
+          guard.forbidden = 0;
           guard.sentAt = this.mono();
           guard.watchUntil = Math.max(guard.watchUntil, this.lastStartAt + TIMINGS.pendingFor);
           this.lastSentAt = guard.sentAt;
@@ -2166,6 +2235,7 @@ export class IntelliFireApp {
       })();
     } catch (err) {
       if (!err?.sent) undo?.();
+      forbiddenFailure = err?.kind === ERROR_KINDS.AUTH || err?.kind === ERROR_KINDS.CHALLENGE;
       if (err?.kind === ERROR_KINDS.AUTH && holder && this.stopGuard === guard) {
         const judged = await this.judgeForbidden(guard, target, holder);
         if (judged === 'refused') {
@@ -2180,7 +2250,7 @@ export class IntelliFireApp {
       this.checking = false;
     }
     if (this.stopGuard !== guard) return;
-    if (attempted && !written) guard.failures += 1;
+    if (attempted && !written && forbiddenFailure) guard.forbidden += 1;
     if (written) this.followUp();
     if (decision === 'done') {
       this.dropStopGuard('applied');
@@ -2202,9 +2272,13 @@ export class IntelliFireApp {
     return Math.max(0, Math.min(TIMINGS.stopCheck, guard.watchUntil - this.mono() + 1));
   }
 
-  /** 15 s; after 4 checks in a row where nothing could leave, doubled each time up to 1 h. */
+  /**
+   * 15 s; after 4 tries in a row answered only 403, doubled each time up to
+   * 1 h. A module that does not answer is checked every 15 s (a local read
+   * costs nothing): the turn off leaves within 15 s of its return.
+   */
   stopDelay(guard) {
-    const extra = Math.max(0, (guard?.failures ?? 0) - 4);
+    const extra = Math.max(0, (guard?.forbidden ?? 0) - 4);
     return Math.min(TIMINGS.stopCheckMax, TIMINGS.stopCheck * 2 ** Math.min(extra, 10));
   }
 
@@ -2221,7 +2295,7 @@ export class IntelliFireApp {
   /** The next check of the turn off: whatever the interval, the failures or a pause. */
   armStopCheck(delay) {
     const guard = this.stopGuard;
-    if (!guard) return;
+    if (!guard || this.closed) return;
     const wait = delay ?? this.stopDelay(guard);
     const dueAt = this.mono() + wait;
     if (guard.timer) {

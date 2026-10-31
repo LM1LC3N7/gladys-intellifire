@@ -130,6 +130,7 @@ export function fakeFireplace({ timers, latencyMs = 5, applyDelayMs = 20 } = {})
         return { status: dev.commandStatus[form.command], body: '' };
       }
       dev.posts.push({ command: form.command, value, at: dev.clock() });
+      dev.onPost?.(form.command, value);
       if (!dev.ignore.has(form.command)) {
         timers.setTimeout(() => dev.apply(form.command, value), dev.applyDelayMs);
       }

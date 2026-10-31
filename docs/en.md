@@ -45,7 +45,8 @@ local API need no password: keep the fireplace on a trusted network.
 The fireplace is read every 15 s by default (10 to 600 s), not more often, even after a restart (the
 time of the last read is kept in /data), and 5 s and 20 s after each command. One request at a time to
 the module. A value missing or unreadable is not published (never as 0); nothing older than 2 minutes is
-sent as new.
+sent as new. When /data cannot be read, the time of the last read is unknown: the fireplace is read
+once at the start (one local request per start, even in a restart loop).
 
 ## Turn off
 
@@ -55,9 +56,12 @@ intellifire4py reads it, a challenge expired: a new challenge is asked, up to 10
 by the module, on a command in progress (it interrupts it: a command clicked before it and not sent yet
 is dropped), nor on a stuck read (it cuts it). It goes to the address typed, or to the one of the last
 read kept in /data while the configuration is not read. It belongs to the fireplace (its serial
-number), not to an address: when you type a new address, the kept turn off follows it; when another
-IntelliFire answers at the address, nothing is sent to it, its reads never let the turn off go, and the
-status says so.
+number): the one of the device whose button was clicked, never the last fireplace read. When you type
+a new address, the kept turn off follows it. When the last read of the address already shows another
+IntelliFire, nothing is posted to it; when another one answers there before it is read, the posts go to
+the address, it refuses them (403) and that refusal never counts against the key. In both cases its
+reads never let the turn off go, the status says so, and the turn off leaves once this fireplace is
+read at the address again.
 
 The turn off cannot leave, and is **kept** (in /data) until it does, in exactly these cases:
 
@@ -68,10 +72,10 @@ The turn off cannot leave, and is **kept** (in /data) until it does, in exactly 
   longer tried by itself; it leaves as soon as the key is saved (the same one too), on a success of the
   "Test the connection" button, or on a new click. 403s when time runs out, or with a key this fireplace
   already accepted, are never a refusal: it is tried again;
-- another fireplace (another serial number) answers at the address: nothing sent, it waits for its own;
+- another fireplace (another serial number) was read at the address: nothing posted, it waits for its own;
 - after a restart, it waits for the configuration to be read (the key is a secret, never in /data);
-- the module does not answer (or answers only 403): tried every 250 ms for 3 s, then every 15 s, spaced
-  up to 1 h after four tries in a row where nothing left.
+- the module does not answer: tried every 250 ms for 3 s, then every 15 s (it leaves within 15 s of the
+  return of the module); a module answering only 403: every 15 s four times, then spaced up to 1 h.
 
 A turn off is confirmed only by a read showing the flame off and the thermostat off. Otherwise it is
 read every 15 s and sent again while the flame is on, 3 times at most; then it is held (said in the
@@ -94,8 +98,9 @@ The **setpoint** puts the fireplace in thermostat mode, which has no 9 h safety 
 Hearth & Home in intellifire4py issue 312): Gladys therefore sends the timer of the session first, then
 the setpoint, and watches the session as a turn on; at its end (plus 2 min), if the flame or the
 thermostat are still read on, Gladys turns the fireplace off. If the setpoint read back is not the one
-sent, Gladys sets the setpoint to 0 at once (thermostat off). A setpoint sent thus replaces a timer
-already running. To check on a real fireplace: whether the end of the timer stops the thermostat mode.
+sent, Gladys sets the setpoint to 0 at once (thermostat off). A timer already running and not longer
+than the session is kept (never lengthened): the setpoint is then sent alone and the session ends with
+that timer; a longer timer, or none, is replaced by the timer of the session. To check on a real fireplace: whether the end of the timer stops the thermostat mode.
 
 A command is refused, nothing sent, when:
 

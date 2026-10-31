@@ -22,5 +22,7 @@ the notes of the version's GitHub Release.
   watched until its timer or the fire off is read, across restarts.
 - A 403 is a challenge expired, retried with new challenges; a key is "refused" only on proof.
 - A turn off kept follows its fireplace (serial) to a new address; another fireplace never lets it go.
+- A turn off belongs to the device clicked; a setpoint never lengthens a shorter timer; the app stops
+  every request and timer at shutdown.
 - "Retrieve the key" button: one sign-in to the IntelliFire cloud per click, key and user id saved in the
   configuration.

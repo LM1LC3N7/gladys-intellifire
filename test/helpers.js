@@ -89,6 +89,8 @@ export async function setup({
       () => (done = true),
     );
     for (let e = 0; e < ms && !done; e += 100) await advance(100);
+    // Its budget spent: a failure at once, never a wait for the test timeout.
+    if (!done) throw new Error(`until: not settled within ${ms} ms of the test clock`);
     return promise;
   };
   if (getConfigHangs) {

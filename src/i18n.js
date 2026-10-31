@@ -127,8 +127,8 @@ export const T = {
   ),
   stopPending: (since) =>
     both(
-      `A turn off from Gladys (${since.en} ago) is not seen applied yet: checked again (every 15 s, spaced up to 1 h while nothing can leave).`,
-      `Une extinction depuis Gladys (il y a ${since.fr}) n'est pas encore vue appliquée : vérifiée à nouveau (toutes les 15 s, espacé jusqu'à 1 h tant que rien ne peut partir).`,
+      `A turn off from Gladys (${since.en} ago) is not seen applied yet: checked again (every 15 s, spaced up to 1 h only while the module answers 403).`,
+      `Une extinction depuis Gladys (il y a ${since.fr}) n'est pas encore vue appliquée : vérifiée à nouveau (toutes les 15 s, espacé jusqu'à 1 h seulement tant que le module répond 403).`,
     ),
   stopWaitsKey: both(
     'A turn off waits for a valid key and user id in the configuration: it leaves as soon as they are saved.',
@@ -332,8 +332,8 @@ export const ERRORS = {
   ),
   stopNotSent: (reason) =>
     both(
-      `Turn off: nothing sent (${reason}); kept, tried again (every 15 s, spaced up to 1 h).`,
-      `Extinction : rien envoyé (${reason}) ; gardée, réessayée (toutes les 15 s, espacé jusqu'à 1 h).`,
+      `Turn off: nothing sent (${reason}); kept, tried again (every 15 s; spaced up to 1 h only after repeated 403s).`,
+      `Extinction : rien envoyé (${reason}) ; gardée, réessayée (toutes les 15 s ; espacé jusqu'à 1 h seulement après des 403 répétés).`,
     ),
   stopWaitsKey: both(
     'Turn off: nothing sent (no valid key and user id configured); kept, it leaves as soon as they are saved.',

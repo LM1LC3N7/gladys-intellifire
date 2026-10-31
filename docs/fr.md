@@ -46,7 +46,9 @@ confiance.
 
 Le foyer est lu toutes les 15 s par défaut (10 à 600 s), pas plus souvent, même après un redémarrage
 (l'heure de la dernière lecture est gardée dans /data), puis 5 s et 20 s après chaque commande. Une
-seule requête à la fois vers le module. Une valeur absente ou illisible n'est pas publiée (jamais comme 0) ; rien de plus vieux que 2 minutes n'est envoyé comme neuf.
+seule requête à la fois vers le module. Une valeur absente ou illisible n'est pas publiée (jamais comme 0) ; rien de plus vieux que 2 minutes n'est envoyé comme neuf. Quand /data ne peut pas être lu,
+l'heure de la dernière lecture est inconnue : le foyer est lu une fois au démarrage (une requête
+locale par démarrage, même en boucle de redémarrage).
 
 ## Éteindre
 
@@ -56,9 +58,12 @@ comme le lit intellifire4py, un défi expiré : un nouveau défi est demandé, j
 d'une pause demandée par le module, ni d'une commande en cours (il l'interrompt : une commande cliquée
 avant lui et pas encore partie est abandonnée), ni d'une lecture bloquée (il la coupe). Il part vers
 l'adresse saisie, ou celle de la dernière lecture gardée dans /data si la configuration n'est pas lue.
-Elle appartient au foyer (son numéro de série), pas à une adresse : si vous saisissez une nouvelle
-adresse, l'extinction gardée la suit ; si un autre IntelliFire répond à l'adresse, rien ne lui est
-envoyé, ses lectures ne lèvent pas l'extinction, et le statut le dit.
+Elle appartient au foyer (son numéro de série) : celui de l'appareil dont le bouton a été cliqué, jamais
+le dernier foyer lu. Si vous saisissez une nouvelle adresse, l'extinction gardée la suit. Si la dernière
+lecture de l'adresse montre déjà un autre IntelliFire, rien ne lui est envoyé ; si un autre y répond
+avant d'avoir été lu, les envois partent vers l'adresse, il les refuse (403) et ce refus ne compte
+jamais contre la clé. Dans les deux cas, ses lectures ne lèvent pas l'extinction, le statut le dit, et
+l'extinction part dès que ce foyer est relu à l'adresse.
 
 L'extinction ne peut pas partir, et elle est **gardée** (dans /data) jusqu'à ce qu'elle parte, dans ces
 cas exactement :
@@ -70,11 +75,12 @@ cas exactement :
   plus essayée d'elle-même ; elle part dès que la clé est enregistrée (la même aussi), à un succès du
   bouton « Tester la connexion », ou à un nouveau clic. Des 403 quand le temps manque, ou avec une clé
   déjà acceptée par ce foyer, ne sont jamais un refus : elle est réessayée ;
-- un autre foyer (autre numéro de série) répond à l'adresse : rien envoyé, elle attend le sien ;
+- un autre foyer (autre numéro de série) a été lu à l'adresse : rien envoyé, elle attend le sien ;
 - après un redémarrage, elle attend la lecture de la configuration (la clé est un secret, jamais dans
   /data) ;
-- le module ne répond pas (ou ne répond que 403) : essayée toutes les 250 ms pendant 3 s, puis toutes
-  les 15 s, espacé jusqu'à 1 h après quatre essais de suite sans envoi.
+- le module ne répond pas : essayée toutes les 250 ms pendant 3 s, puis toutes les 15 s (elle part dans
+  les 15 s qui suivent son retour) ; un module qui ne répond que 403 : toutes les 15 s quatre fois, puis
+  espacé jusqu'à 1 h.
 
 Une extinction est confirmée seulement par une lecture qui montre la flamme éteinte et le thermostat
 arrêté. Sinon elle est relue toutes les 15 s et renvoyée tant que la flamme est allumée, 3 fois au plus ;
@@ -98,8 +104,10 @@ La **consigne** met le foyer en mode thermostat, qui n'a pas d'arrêt de sécuri
 Hearth & Home dans intellifire4py, ticket 312) : Gladys envoie donc d'abord la minuterie de la séance,
 puis la consigne, et surveille la séance comme un allumage ; à la fin de la séance (plus 2 min), si la
 flamme ou le thermostat sont encore lus allumés, Gladys éteint le foyer. Si la consigne relue n'est
-pas celle envoyée, Gladys remet aussitôt la consigne à 0 (thermostat arrêté). Une consigne envoyée
-remplace donc une minuterie déjà en cours. À vérifier sur un vrai foyer : la fin de la minuterie
+pas celle envoyée, Gladys remet aussitôt la consigne à 0 (thermostat arrêté). Une minuterie déjà en
+cours et pas plus longue que la séance est gardée (jamais allongée) : la consigne part seule et la
+séance finit avec cette minuterie ; une minuterie plus longue, ou aucune, est remplacée par celle de la
+séance. À vérifier sur un vrai foyer : la fin de la minuterie
 arrête-t-elle le mode thermostat.
 
 Une commande est refusée, sans rien envoyer, quand :

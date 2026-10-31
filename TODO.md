@@ -28,6 +28,17 @@ Handoff document: what is done, what was decided, what comes next.
       feature bounded by the configuration. M3 User-Agent version from package.json. M4 texts. M5 the
       timer posted a second time before a turn off. M6 docs: the key from Home Assistant. M7 a read
       without `thermostat` is not "thermostat off".
+- [x] **Review 2 fixes** (2026-10-31), tests in `test/review-r2.test.js`: B1 the turn off carries
+      the serial of the device clicked; nothing posted while the last read of the address shows
+      another serial; another serial's 403s never count against the key. I1 a setpoint post checks
+      the option, the configuration, the turn offs, the pause, the key and the 3.5 s deadline in its
+      own `beforeSend`. I2 a kept turn off checked every 15 s while the module does not answer;
+      spaced up to 1 h only after repeated 403s. I3 `shutdown()` closes the app: no request, no
+      timer re-armed (schedule, followUp, armStopCheck, armSession, repostTimer, config retry); the
+      real-clock test bounds every wait and cleans up in `t.after`; `until()` of the helpers rejects
+      when its budget is spent. I4 tests for the six surviving mutants. M1 a setpoint keeps a timer
+      already running and not longer than the session (never lengthened). M2 docs say exactly when
+      an other fireplace receives posts. M4 documented (see Next patch).
 - [ ] **Milestone 2 — real fireplace**: run against a real module (see "To check"), anonymized captures
       as fixtures.
 - [ ] **Milestone 3 — more**: light level command, pilot command, timer command, UDP discovery
@@ -63,6 +74,12 @@ Handoff document: what is done, what was decided, what comes next.
 - Equivalent mutants (review r1): "a newer turn on lets a kept turn off go only if no turn off since"
   (a turn off clicked meanwhile aborts the line before the post can be accepted); "special file never
   read" (a FIFO or a directory fails the read anyway; a device file needs root to make in a test).
+
+## Next patch
+
+- /data unreadable: one read at each start (`firstWait` 0), so a restart loop reads faster than the
+  interval. Keep the time of the last read elsewhere (a second small file) or wait one interval when
+  the start follows a recent one.
 
 ## To check on a real fireplace
 
