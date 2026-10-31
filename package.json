@@ -1,6 +1,6 @@
 {
   "name": "gladys-intellifire",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for IntelliFire gas fireplaces (Hearth & Home Technologies) over the local API of their Wi-Fi module: flame, pilot, temperature, thermostat, timer, faults; turn off never held back; turn on, flame height, fan and setpoint off by default. Unofficial, not affiliated with Hearth & Home Technologies.",
   "type": "module",

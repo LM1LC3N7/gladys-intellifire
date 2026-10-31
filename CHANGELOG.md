@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-31
+
 ### Added
 
 - IntelliFire gas fireplaces over the local API of the IFT Wi-Fi module: flame, pilot, glass hot,
@@ -34,3 +36,6 @@ the notes of the version's GitHub Release.
   when it can be, said in the status).
 - "Retrieve the key" button: one sign-in to the IntelliFire cloud per click, key and user id saved in the
   configuration.
+
+[Unreleased]: https://github.com/LM1LC3N7/gladys-intellifire/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-intellifire/releases/tag/v0.1.1
