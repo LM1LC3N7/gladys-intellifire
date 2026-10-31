@@ -193,7 +193,7 @@ test('B2: the serial is kept in /data with the turn off', async () => {
   t.dev.state.power = 1;
   t.dev.ignore.add('power');
   await t.press('turn-off');
-  assert.equal(t.store.data.stop.serial, SERIAL);
+  assert.equal(t.store.data.stops[0].serial, SERIAL);
 });
 
 // --- B3, I1, M5: the session of a turn on ----------------------------------------------
@@ -304,11 +304,11 @@ test('B4: /data save frozen and a 429: the reads resume, the test button answers
 test('I2: the same key saved again, or a test read, lifts a refusal for the commands', async () => {
   const t = await setup({ config: ALLOW });
   t.dev.state.power = 1;
-  t.app.keyRefused = true;
+  t.app.refusedBy.add(SERIAL);
   refused(await t.press('fan-speed', '3'), /refuse la clé/);
   await t.until(t.gladys.fake.configUpdated(ALLOW));
   ok(await t.press('fan-speed', '3'));
-  t.app.keyRefused = true;
+  t.app.refusedBy.add(SERIAL);
   await t.advance(16 * SECOND, 100);
   await t.until(t.gladys.fake.action('test_connection'));
   ok(await t.press('fan-speed', '2'));
@@ -387,7 +387,7 @@ test('I4: a command is refused during a pause, and no read goes then', async () 
 
 test('I4: a command is refused while the key is refused', async () => {
   const t = await setup({ config: ALLOW });
-  t.app.keyRefused = true;
+  t.app.refusedBy.add(SERIAL);
   refused(await t.press('fan-speed', '3'), /refuse la clé/);
   assert.equal(t.dev.posts.length, 0);
 });
@@ -444,7 +444,7 @@ test('I4: a test button that reads lifts a refused turn off', async () => {
   await t.press('turn-off');
   t.dev.ignore.clear();
   t.app.stopGuard.refused = true;
-  t.app.keyRefused = true;
+  t.app.refusedBy.add(SERIAL);
   t.app.lastAttemptAt = -Infinity;
   t.app.clearTimer();
   const ack = t.gladys.fake.action('test_connection');
@@ -466,7 +466,7 @@ test('I4: no read goes during a pause, even asked', async () => {
 
 test('I4: a turn off date in the future counts as now', () => {
   const m = normalizeMemory({ stop: { host: HOST, port: 80, since: NOW + 3600_000 } }, NOW);
-  assert.equal(m.stop.since, NOW);
+  assert.equal(m.stops[0].since, NOW);
 });
 
 test('B1: ten 403s on a command, the key accepted before: never "key refused"', async () => {

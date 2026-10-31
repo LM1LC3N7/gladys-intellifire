@@ -97,7 +97,7 @@ test('restart: a turn off kept in /data goes once the configuration gives the ke
   assert.equal(powerOffs(t.dev).length, 1);
   assert.equal(t.dev.state.power, 0);
   assert.equal(t.app.stopGuard, undefined);
-  assert.equal(store.data.stop, null);
+  assert.deepEqual(store.data.stops, []);
 });
 
 test('a hung /data never holds a turn off nor the next click', async () => {
@@ -138,7 +138,7 @@ test('a key refused: the turn off kept, never tried by itself, goes with a new k
   await t.advance(3 * MINUTE, 200);
   assert.equal(t.dev.requests.filter((r) => r.method === 'POST').length, posts);
   assert.match(t.status().text, /refusé la clé/);
-  assert.equal(t.store.data.stop.refused, true);
+  assert.equal(t.store.data.stops[0].refused, true);
   await t.until(t.gladys.fake.configUpdated({ ...bad, api_key: API_KEY }));
   await t.advance(3 * SECOND);
   assert.equal(t.dev.state.power, 0);

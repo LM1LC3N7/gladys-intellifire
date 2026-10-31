@@ -151,6 +151,12 @@ export const LIMITS = {
   /** E-mail address and password of the IntelliFire account. */
   userMax: 254,
   secretMax: 256,
+  /**
+   * Turn offs kept at once, one per fireplace (serial): beyond, the oldest
+   * one of a fireplace that is neither the one clicked nor the one read at
+   * the address is let go (logged).
+   */
+  stopGuards: 4,
 };
 
 export const SECOND = 1_000;

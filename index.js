@@ -1,9 +1,9 @@
 // -----------------------------------------------------------------------------
 // Entry point: SDK wiring only (src/handlers.js registers every handler BEFORE
 // connect(), and delegates to the IntelliFireApp of src/app.js). Before
-// connecting, a turn off kept in /data (not seen applied before a restart) is
-// restored: it leaves as soon as the configuration gives the key (a secret,
-// never in /data).
+// connecting, the turn offs kept in /data (not seen applied before a restart,
+// one per fireplace) are restored: they leave as soon as the configuration
+// gives the key (a secret, never in /data).
 //
 // Environment variables provided by the Gladys supervisor, read by the SDK:
 // GLADYS_HOST_API_URL, GLADYS_INTEGRATION_TOKEN, GLADYS_INTEGRATION_SELECTOR.

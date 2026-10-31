@@ -54,16 +54,29 @@ locale par démarrage, même en boucle de redémarrage).
 
 Le bouton **Éteindre** envoie l'extinction (puissance 0), puis remet la consigne du thermostat à 0 (pour
 qu'aucun thermostat ne rallume la flamme). Chaque envoi demande un défi au module ; un refus HTTP 403 est,
-comme le lit intellifire4py, un défi expiré : un nouveau défi est demandé, jusqu'à 10 fois. Il ne dépend ni de l'option, ni d'une lecture préalable, ni
-d'une pause demandée par le module, ni d'une commande en cours (il l'interrompt : une commande cliquée
-avant lui et pas encore partie est abandonnée), ni d'une lecture bloquée (il la coupe). Il part vers
-l'adresse saisie, ou celle de la dernière lecture gardée dans /data si la configuration n'est pas lue.
-Elle appartient au foyer (son numéro de série) : celui de l'appareil dont le bouton a été cliqué, jamais
-le dernier foyer lu. Si vous saisissez une nouvelle adresse, l'extinction gardée la suit. Si la dernière
-lecture de l'adresse montre déjà un autre IntelliFire, rien ne lui est envoyé ; si un autre y répond
-avant d'avoir été lu, les envois partent vers l'adresse, il les refuse (403) et ce refus ne compte
-jamais contre la clé. Dans les deux cas, ses lectures ne lèvent pas l'extinction, le statut le dit, et
+comme le lit intellifire4py, un défi expiré : un nouveau défi est demandé, jusqu'à 10 fois. Elle ne
+dépend ni de l'option, ni d'une lecture préalable, ni d'une pause demandée par le module, ni d'une
+commande en cours (elle l'interrompt : une commande cliquée avant elle et pas encore partie est
+abandonnée), ni d'une lecture bloquée (elle la coupe). Elle part vers l'adresse saisie, ou celle de la
+dernière lecture gardée dans /data si la configuration n'est pas lue.
+
+Une extinction appartient à son foyer (son numéro de série) : celui de l'appareil dont le bouton a été
+cliqué, jamais le dernier foyer lu. Chaque foyer a sa propre extinction gardée : jusqu'à 4 foyers ayant
+une extinction gardée en même temps, un clic sur l'extinction d'un autre appareil n'en lève jamais une.
+Au-delà de 4, l'extinction la plus ancienne d'un foyer qui n'est ni celui cliqué ni celui lu à l'adresse
+est levée (écrit dans les journaux). Si vous saisissez une nouvelle adresse, les extinctions gardées
+la suivent. Si la dernière lecture de l'adresse montre un autre IntelliFire (aussi quand une
+vérification ne lit ensuite aucun numéro de série), rien ne lui est envoyé ; si un autre y répond avant
+d'avoir été lu, les envois partent vers l'adresse, il les refuse (403) et ce refus ne compte jamais
+contre la clé. Dans les deux cas, ses lectures ne lèvent pas l'extinction, le statut le dit, et
 l'extinction part dès que ce foyer est relu à l'adresse.
+
+Une extinction n'est signée qu'avec la clé de son propre foyer. Pour autant que Gladys le sache pendant
+cette exécution, la clé saisie appartient au foyer qui a accepté un envoi signé avec elle, ou à celui
+pour lequel elle a été récupérée par « Récupérer la clé » (gardé en mémoire seulement, jamais dans
+/data, oublié quand une autre clé est enregistrée). L'extinction d'un autre foyer n'est alors jamais
+signée avec elle. Tant que Gladys ne le sait pas (après un redémarrage, avant tout envoi accepté),
+l'extinction part avec la clé saisie.
 
 L'extinction ne peut pas partir, et elle est **gardée** (dans /data) jusqu'à ce qu'elle parte, dans ces
 cas exactement :
@@ -71,22 +84,30 @@ cas exactement :
 - aucune adresse connue (ni saisie, ni gardée) : refusée, rien n'est gardé ;
 - pas de clé ou d'identifiant valides : elle part dès qu'ils sont enregistrés (bouton ou saisie) ;
 - le foyer refuse la clé ou l'identifiant, sur preuve seulement (10 défis refusés en 403 dans un même
-  envoi, le numéro de série de ce foyer lu à l'adresse, une clé qu'il n'a jamais acceptée) : elle n'est
-  plus essayée d'elle-même ; elle part dès que la clé est enregistrée (la même aussi), à un succès du
-  bouton « Tester la connexion », ou à un nouveau clic. Des 403 quand le temps manque, ou avec une clé
-  déjà acceptée par ce foyer, ne sont jamais un refus : elle est réessayée ;
+  envoi, le numéro de série de ce foyer lu à l'adresse, une clé qu'il n'a jamais acceptée et dont on ne
+  sait pas qu'elle appartient à un autre foyer) : elle n'est plus essayée d'elle-même ; elle part dès que
+  la clé est enregistrée (la même aussi), à un succès du bouton « Tester la connexion », ou à un nouveau
+  clic. Ce refus ne concerne que ce foyer : l'extinction et les commandes d'un autre foyer ne sont
+  jamais retenues par lui. Des 403 quand le temps manque, ou avec une clé déjà acceptée par ce foyer, ne
+  sont jamais un refus : elle est réessayée ;
+- la clé saisie est connue pour appartenir à un autre foyer (voir plus haut) : rien envoyé ; elle part
+  dès qu'est enregistrée une clé dont on ne sait pas qu'elle appartient à un autre foyer ;
 - un autre foyer (autre numéro de série) a été lu à l'adresse : rien envoyé, elle attend le sien ;
 - après un redémarrage, elle attend la lecture de la configuration (la clé est un secret, jamais dans
   /data) ;
 - le module ne répond pas : essayée toutes les 250 ms pendant 3 s, puis toutes les 15 s (elle part dans
   les 15 s qui suivent son retour) ; un module qui ne répond que 403 : toutes les 15 s quatre fois, puis
-  espacé jusqu'à 1 h.
+  espacé jusqu'à 1 h ;
+- l'intégration s'arrête (Gladys lui a demandé de s'arrêter) : rien envoyé ; elle est gardée dans /data
+  et part au démarrage suivant.
 
 Une extinction est confirmée seulement par une lecture qui montre la flamme éteinte et le thermostat
 arrêté. Sinon elle est relue toutes les 15 s et renvoyée tant que la flamme est allumée, 3 fois au plus ;
 ensuite elle est retenue (dit dans le statut) sans nouvel envoi jusqu'à un nouveau clic. Elle est
-levée par une lecture montrant le foyer éteint (deux lectures de suite si elle n'est jamais partie), ou
-par un allumage cliqué ensuite depuis Gladys avec l'option ; jamais par le temps.
+levée par une lecture de son foyer le montrant éteint (deux lectures de suite si elle n'est jamais
+partie), ou par un allumage de ce foyer cliqué ensuite depuis Gladys avec l'option ; jamais par le
+temps, ni par l'extinction ou l'allumage d'un autre foyer (sauf au-delà de 4 foyers, comme dit plus
+haut).
 
 ## Allumer, flamme, ventilateur, consigne
 
@@ -113,10 +134,12 @@ arrête-t-elle le mode thermostat.
 Une commande est refusée, sans rien envoyer, quand :
 
 - l'option est décochée, ou la configuration pas encore lue ;
-- la clé ou l'identifiant manquent, ou le foyer les a refusés (sur preuve, voir plus haut ; levé par
-  un enregistrement de la clé ou un succès de « Tester la connexion ») ;
+- l'intégration s'arrête (Gladys lui a demandé de s'arrêter) ;
+- la clé ou l'identifiant manquent, ou ce foyer les a refusés (sur preuve, voir plus haut ; levé par
+  un enregistrement de la clé ou un succès de « Tester la connexion »), ou la clé saisie est connue
+  pour appartenir à un autre foyer (voir plus haut) ;
 - une autre commande est en cours, une extinction est en cours d'envoi, ou (sauf pour Allumer) une
-  extinction est gardée ;
+  extinction de ce foyer est gardée ;
 - le module a demandé d'attendre (HTTP 429 ou 503) ;
 - la lecture fraîche échoue ou ne vient pas à temps (la commande doit partir dans les 3,5 s) ;
 - le foyer lu n'est pas cet appareil (autre numéro de série) ;
@@ -134,5 +157,7 @@ passé.
 
 ## Statut
 
-L'écran de configuration dit l'état du foyer, une extinction gardée ou retenue, une clé refusée ou
-absente, un module injoignable (prochain essai), une pause demandée par le module.
+L'écran de configuration dit l'état du foyer, chaque extinction gardée ou retenue (nommée par la fin
+du numéro de série de son foyer, 4 caractères, quand il y en a plusieurs, ou quand ce n'est pas le
+foyer lu), une clé refusée ou absente, un module injoignable (prochain essai), une pause demandée par le
+module.

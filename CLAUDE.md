@@ -25,7 +25,7 @@ npx github:GladysAssistant/integration-store .   # store admission checks
 ## Architecture
 
 ```
-index.js                          SDK wiring only; a turn off kept in /data restored at boot
+index.js                          SDK wiring only; the turn offs kept in /data restored at boot
 src/handlers.js                   SDK handlers -> IntelliFireApp (shared with the tests)
 src/app.js                        polling, device, states, status, commands, the turn off, the key button
 src/lane.js                       one HTTP exchange at a time; the turn off first (it aborts the holder)
@@ -34,7 +34,7 @@ src/intellifire/client.js         /poll, and a command = challenge + signed post
 src/intellifire/model.js          strict parsers of /poll and the challenge, the signature
 src/intellifire/http.js           one bounded HTTP exchange (node:http), `beforeSend`, abort, error kinds
 src/intellifire/cloud.js          iftapi.net sign-in and fireplace list, for the "Retrieve the key" button only
-src/store.js                      /data/intellifire-state.json: target, last read, turn off, start check, pause; no secret
+src/store.js                      /data/intellifire-state.json: target, last read, turn offs, start check, pause; no secret
 src/publisher.js                  states to Gladys within 300 per minute, nothing older than 2 minutes
 src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
 src/i18n.js                       English and French runtime texts
@@ -53,9 +53,12 @@ test/kit/                         gladys-testkit files, as is (clocks, loopback 
   error. A `secret` field is "kept by Gladys in its database, never shown again", never "encrypted".
 - **No switch, no writable binary**: turn on and off are buttons, the flame height and the fan selects.
 - **The turn off**: never behind the option, a read, a command, a pause or a missing configuration; it
-  aborts what holds the line; kept in /data (200 ms at most for the save) with the serial of its
-  fireplace, follows the configured address; let go only by a read of that serial showing it off or a
-  newer turn on from Gladys, never by time. A 403 is a challenge expired: "key refused" only on proof.
+  aborts what holds the line; one kept per fireplace (serial, 4 at most), in /data (200 ms at most for
+  the save), follows the configured address; let go only by a read of that serial showing it off or a
+  newer turn on of that fireplace from Gladys, never by time nor by the turn off of another device. A
+  403 is a challenge expired: "key refused" only on proof, for that serial only, never when the key is
+  known to be another fireplace's (accepted by it, or retrieved for it); a turn off is never signed
+  with such a key. After `shutdown()`: no request, no timer (a command refused, a turn off kept).
 - **Turn on, flame height, fan, setpoint**: behind `allow_control`, decided on a fresh read, checked
   again in `beforeSend`; a turn on (and a setpoint) always sets the timer, or the fireplace is turned
   off; the session is watched by the reads (in /data, never lifted by time).

@@ -142,6 +142,12 @@ export const T = {
     'A turn off waits for this fireplace: another one (another serial number) answers at the address.',
     "Une extinction attend ce foyer : un autre (autre numéro de série) répond à l'adresse.",
   ),
+  stopForeignKey: both(
+    "A turn off waits for this fireplace's own key: the key configured is another fireplace's (it accepted it, or it was retrieved for it): nothing posted; it leaves once this fireplace's key is saved.",
+    "Une extinction attend la clé de ce foyer : la clé configurée est celle d'un autre foyer (il l'a acceptée, ou elle a été récupérée pour lui) : rien envoyé ; elle part dès que la clé de ce foyer est enregistrée.",
+  ),
+  /** A note of one turn off kept, when several fireplaces have one. */
+  ofFireplace: (id, note) => both(`Fireplace ${id}: ${note.en}`, `Foyer ${id} : ${note.fr}`),
   stopHeld: both(
     'A turn off was posted 4 times and the fireplace still shows the flame: no more posts until a new click (check the fireplace).',
     "Une extinction a été envoyée 4 fois et le foyer montre toujours la flamme : plus d'envoi avant un nouveau clic (vérifiez le foyer).",
@@ -249,6 +255,14 @@ export const ERRORS = {
     'The fireplace refuses the key or the user id: nothing sent.',
     "Le foyer refuse la clé ou l'identifiant : rien envoyé.",
   ),
+  notItsKey: both(
+    "The key configured is another fireplace's (it accepted it, or it was retrieved for it): nothing sent; save this fireplace's key.",
+    "La clé configurée est celle d'un autre foyer (il l'a acceptée, ou elle a été récupérée pour lui) : rien envoyé ; enregistrez la clé de ce foyer.",
+  ),
+  closed: both(
+    'The integration is stopping: nothing sent.',
+    "L'intégration s'arrête : rien envoyé.",
+  ),
   tooSlow: both(
     'The fireplace did not answer in time: nothing sent.',
     "Le foyer n'a pas répondu à temps : rien envoyé.",
@@ -325,6 +339,14 @@ export const ERRORS = {
   stopKeyRefused: both(
     'Turn off: nothing applied, the fireplace refuses the key or the user id; kept, it leaves as soon as a key is saved or a test read succeeds.',
     "Extinction : rien d'appliqué, le foyer refuse la clé ou l'identifiant ; gardée, elle part dès qu'une clé est enregistrée ou qu'une lecture de test réussit.",
+  ),
+  stopForeignKey: both(
+    "Turn off: the key configured is another fireplace's (it accepted it, or it was retrieved for it): nothing posted; kept, it leaves once this fireplace's key is saved.",
+    "Extinction : la clé configurée est celle d'un autre foyer (il l'a acceptée, ou elle a été récupérée pour lui) : rien envoyé ; gardée, elle part dès que la clé de ce foyer est enregistrée.",
+  ),
+  stopClosed: both(
+    'Turn off: nothing sent, the integration is stopping; kept in /data, it leaves at its next start.',
+    "Extinction : rien envoyé, l'intégration s'arrête ; gardée dans /data, elle part à son prochain démarrage.",
   ),
   stopOtherSerial: both(
     'Turn off: another fireplace (another serial number) answers at the address: nothing posted; kept for this fireplace.',

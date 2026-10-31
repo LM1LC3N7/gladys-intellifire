@@ -5,10 +5,11 @@
 //   - `lastAttemptAt`: the time of the last read (written at most once a
 //     minute, BEFORE the read), so a restart never reads sooner than the
 //     interval;
-//   - `stop`: the turn off not seen applied (address, serial of its
-//     fireplace, since, written, resends, refused): a restart sends it again
-//     as soon as the key is read (the key is a secret: never in /data, so the
-//     turn off waits for the configuration after a restart);
+//   - `stops`: the turn offs not seen applied, one per fireplace (address,
+//     serial of its fireplace, since, written, resends, refused), 4 at most:
+//     a restart sends them again as soon as the key is read (the key is a
+//     secret: never in /data, so they wait for the configuration after a
+//     restart). The single `stop` of an older file is read as one of them;
 //   - `start`: the session of a turn on (or a setpoint) from Gladys, checked
 //     until a read shows its timer or the fire off: never dropped by age;
 //   - `pause`: a 429/503 (until).
@@ -21,7 +22,7 @@
 
 import { constants } from 'node:fs';
 import { open, rename } from 'node:fs/promises';
-import { SESSION, TIMINGS } from './constants.js';
+import { LIMITS, SESSION, TIMINGS } from './constants.js';
 import { serialOf } from './intellifire/model.js';
 
 export const STATE_FILE = '/data/intellifire-state.json';
@@ -147,6 +148,22 @@ function normalizeStop(raw, now) {
 }
 
 /**
+ * The turn offs kept, one per serial (the last one of a serial wins), the
+ * newest `LIMITS.stopGuards`; an older file's single `stop` is one of them.
+ */
+function normalizeStops(data, now) {
+  const raw = Array.isArray(data.stops) ? data.stops : data.stop ? [data.stop] : [];
+  const bySerial = new Map();
+  for (const item of raw.slice(-4 * LIMITS.stopGuards)) {
+    const stop = normalizeStop(item, now);
+    if (!stop) continue;
+    bySerial.delete(stop.serial);
+    bySerial.set(stop.serial, stop);
+  }
+  return [...bySerial.values()].slice(-LIMITS.stopGuards);
+}
+
+/**
  * The check of a turn on (or a setpoint) from Gladys: never dropped by age
  * (only a read ends it); a date in the future counts as now.
  */
@@ -176,7 +193,7 @@ export function normalizeMemory(raw, now) {
   return {
     target: target ? { ...target, serial: serialOf(data.target?.serial) ?? null } : null,
     lastAttemptAt: Number.isFinite(data.lastAttemptAt) ? Math.min(data.lastAttemptAt, now) : null,
-    stop: normalizeStop(data.stop, now) ?? null,
+    stops: normalizeStops(data, now),
     start: normalizeStart(data.start, now),
     pause:
       pause && typeof pause === 'object' && Number.isFinite(pause.until) && pause.until > now

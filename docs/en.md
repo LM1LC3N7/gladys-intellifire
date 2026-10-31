@@ -52,36 +52,54 @@ once at the start (one local request per start, even in a restart loop).
 
 The **Turn off** button sends the turn off (power 0), then sets the thermostat setpoint to 0 (so that no
 thermostat lights the flame again). Each post asks the module for a challenge; an HTTP 403 is, as
-intellifire4py reads it, a challenge expired: a new challenge is asked, up to 10 times. It does not depend on the option, on a read first, on a pause asked
-by the module, on a command in progress (it interrupts it: a command clicked before it and not sent yet
-is dropped), nor on a stuck read (it cuts it). It goes to the address typed, or to the one of the last
-read kept in /data while the configuration is not read. It belongs to the fireplace (its serial
-number): the one of the device whose button was clicked, never the last fireplace read. When you type
-a new address, the kept turn off follows it. When the last read of the address already shows another
-IntelliFire, nothing is posted to it; when another one answers there before it is read, the posts go to
-the address, it refuses them (403) and that refusal never counts against the key. In both cases its
-reads never let the turn off go, the status says so, and the turn off leaves once this fireplace is
-read at the address again.
+intellifire4py reads it, a challenge expired: a new challenge is asked, up to 10 times. It does not
+depend on the option, on a read first, on a pause asked by the module, on a command in progress (it
+interrupts it: a command clicked before it and not sent yet is dropped), nor on a stuck read (it cuts
+it). It goes to the address typed, or to the one of the last read kept in /data while the configuration
+is not read.
+
+A turn off belongs to its fireplace (serial number): the one of the device whose button was clicked,
+never the last fireplace read. Each fireplace has its own turn off kept: up to 4 fireplaces with a turn
+off kept at once, a click on the turn off of another device never lets one go. Beyond 4, the oldest turn
+off of a fireplace that is neither the one clicked nor the one read at the address is let go (written in
+the logs). When you type a new address, the turn offs kept follow it. When the last read of the
+address shows another IntelliFire (also when a check then reads no serial number), nothing is posted to it; when another one
+answers there before it is read, the posts go to the address, it refuses them (403) and that refusal
+never counts against the key. In both cases its reads never let the turn off go, the status says so,
+and the turn off leaves once this fireplace is read at the address again.
+
+A turn off is signed only with the key of its own fireplace. As far as Gladys knows it in this run, the
+key typed belongs to the fireplace that accepted a post signed with it, or to the one it was retrieved
+for with "Retrieve the key" (kept in memory only, never in /data, forgotten when another key is saved).
+The turn off of another fireplace is then never signed with it. As long as Gladys does not know (after a
+restart, before any post accepted), the turn off goes with the key typed.
 
 The turn off cannot leave, and is **kept** (in /data) until it does, in exactly these cases:
 
 - no address known (neither typed nor kept): refused, nothing kept;
 - no valid key or user id: it leaves as soon as they are saved (button or typed);
 - the fireplace refuses the key or the user id, on proof only (10 challenges refused with 403 in one
-  post, the serial number of this fireplace read at the address, a key it never accepted): it is no
-  longer tried by itself; it leaves as soon as the key is saved (the same one too), on a success of the
-  "Test the connection" button, or on a new click. 403s when time runs out, or with a key this fireplace
-  already accepted, are never a refusal: it is tried again;
+  post, the serial number of this fireplace read at the address, a key it never accepted and not known
+  to belong to another fireplace): it is no longer tried by itself; it leaves as soon as the key is
+  saved (the same one too), on a success of the "Test the connection" button, or on a new click. That
+  refusal is this fireplace's only: the turn off and the commands of another fireplace are never held
+  by it. 403s when time runs out, or with a key this fireplace already accepted, are never a refusal:
+  it is tried again;
+- the key typed is known to belong to another fireplace (see above): nothing posted; it leaves once a
+  key is saved that is not known to belong to another one;
 - another fireplace (another serial number) was read at the address: nothing posted, it waits for its own;
 - after a restart, it waits for the configuration to be read (the key is a secret, never in /data);
 - the module does not answer: tried every 250 ms for 3 s, then every 15 s (it leaves within 15 s of the
-  return of the module); a module answering only 403: every 15 s four times, then spaced up to 1 h.
+  return of the module); a module answering only 403: every 15 s four times, then spaced up to 1 h;
+- the integration is stopping (Gladys asked it to stop): nothing sent; it is kept in /data and leaves
+  at the next start.
 
 A turn off is confirmed only by a read showing the flame off and the thermostat off. Otherwise it is
 read every 15 s and sent again while the flame is on, 3 times at most; then it is held (said in the
-status) without new posts until a new click. It is let go by a read showing the fireplace off (two
-reads in a row when it never left), or by a turn on clicked afterwards in Gladys with the option; never
-by time.
+status) without new posts until a new click. It is let go by a read of its fireplace showing it off
+(two reads in a row when it never left), or by a turn on of that fireplace clicked afterwards in Gladys
+with the option; never by time, nor by the turn off or the turn on of another fireplace (but beyond 4
+fireplaces, as said above).
 
 ## Turn on, flame, fan, setpoint
 
@@ -105,9 +123,12 @@ that timer; a longer timer, or none, is replaced by the timer of the session. To
 A command is refused, nothing sent, when:
 
 - the option is off, or the configuration not read yet;
-- the key or the user id is missing, or the fireplace refused them (on proof, see above; lifted by a
-  save of the key or a success of "Test the connection");
-- another command is running, a turn off is being sent, or (except for Turn on) a turn off is kept;
+- the integration is stopping (Gladys asked it to stop);
+- the key or the user id is missing, or this fireplace refused them (on proof, see above; lifted by a
+  save of the key or a success of "Test the connection"), or the key typed is known to belong to
+  another fireplace (see above);
+- another command is running, a turn off is being sent, or (except for Turn on) a turn off of this
+  fireplace is kept;
 - the module asked to wait (HTTP 429 or 503);
 - the fresh read fails or does not come in time (the command must leave within 3.5 s);
 - the fireplace read is not this device (another serial number);
@@ -124,5 +145,6 @@ applied yet", "sent, without confirmation" or "nothing sent", as it happened.
 
 ## Status
 
-The configuration screen tells the state of the fireplace, a turn off kept or held, a key refused or
-missing, a module unreachable (next try), a pause asked by the module.
+The configuration screen tells the state of the fireplace, each turn off kept or held (named by the
+last 4 digits of the serial number of its fireplace when there are several, or when it is not the
+fireplace read), a key refused or missing, a module unreachable (next try), a pause asked by the module.

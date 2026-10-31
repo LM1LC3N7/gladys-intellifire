@@ -144,7 +144,10 @@ test('I3: after shutdown in flight, no request and no timer any more', async () 
   await t.app.shutdown();
   const n = t.dev.requests.length;
   await t.advance(5 * MINUTE, 500);
-  await ack.catch(() => {});
+  await t.until(
+    ack.catch(() => {}),
+    10 * SECOND,
+  );
   assert.equal(t.dev.requests.length, n, 'no request after shutdown');
   assert.equal(t.clock.pending, 0, 'no timer left');
 });
@@ -241,7 +244,10 @@ test('I3: a command or a turn off ending after shutdown arms no timer', async ()
     await t.advance(600, 50);
     await t.app.shutdown();
     await t.advance(2000, 50);
-    await ack.catch(() => {});
+    await t.until(
+      ack.catch(() => {}),
+      10 * SECOND,
+    );
     assert.equal(t.clock.pending, 0, `${role}: no timer armed after shutdown`);
   }
 });

@@ -49,17 +49,21 @@
 // failed read, a 429/503 pause, a fireplace never read, nor a configuration
 // not read yet (it goes to the address of the last read kept in /data). A
 // command that arrived before it and has not left gives way. It needs the
-// key and the user id: without them, or when the fireplace refuses them (on
-// proof only: a 403 is a challenge expired), it is kept (in /data) and
-// leaves as soon as they are saved (or a test succeeds). It belongs to the
-// serial of its fireplace and follows the configured address; another
-// serial at the address gets nothing and never lets it go. Tried again
-// every 250 ms for 3 s; not seen applied, it is kept in /data and checked
-// every 15 s (spaced up to 1 h while nothing can leave): posted again while
-// the flame is on (3 times at most, then held and said in the status), let
-// go when a read of its serial shows the fire off (two reads in a row when
-// it never left), or when a newer turn on clicked in Gladys left. Never by
-// time.
+// key and the user id: without them, when its fireplace refuses them (on
+// proof only: a 403 is a challenge expired; that fireplace only), or when
+// the key is known to be another fireplace's (accepted by it, or retrieved
+// for it), it is kept (in /data) and leaves as soon as a key is saved (or a
+// test succeeds). Each fireplace (serial) has its own turn off kept (4 at
+// most), which follows the configured address; another serial at the
+// address gets nothing and never lets it go, nor does the turn off of
+// another device. Tried again every 250 ms for 3 s; not seen applied, it is
+// kept in /data and checked every 15 s (spaced up to 1 h while nothing can
+// leave): posted again while the flame is on (3 times at most, then held
+// and said in the status), let go when a read of its serial shows the fire
+// off (two reads in a row when it never left), or when a newer turn on of
+// that fireplace clicked in Gladys left. Never by time. After shutdown()
+// nothing is requested nor armed: a command is refused, a turn off kept in
+// /data for the next start.
 //
 // Clocks: `monotonic` paces everything in memory; the wall clock only dates
 // what /data keeps for the next process.
@@ -72,6 +76,7 @@ import {
   FAN,
   FEATURES,
   FLAME,
+  LIMITS,
   PRESSED,
   SECOND,
   SESSION,
@@ -110,6 +115,9 @@ const RETRYABLE = [
   ERROR_KINDS.PROTOCOL,
   ERROR_KINDS.RATE_LIMITED,
 ];
+
+/** The last 4 digits of a serial, as the device name and the status show it. */
+const shortId = (serial) => serial.slice(-4).toUpperCase();
 
 const freshFireplace = () => ({
   serial: undefined,
@@ -179,8 +187,12 @@ export class IntelliFireApp {
     this.protectSeq = 0;
     this.stops = [];
     this.stopWorker = undefined;
-    /** The turn off not seen applied, or undefined. */
-    this.stopGuard = undefined;
+    /**
+     * The turn offs not seen applied, one per fireplace (serial), oldest
+     * first, `LIMITS.stopGuards` at most: a click for another fireplace never
+     * lets one go.
+     */
+    this.stopGuards = [];
     this.checking = false;
     /**
      * The session of a turn on (or a setpoint) from Gladys, checked by the
@@ -189,10 +201,16 @@ export class IntelliFireApp {
      * reposted, thermostat }.
      */
     this.startCheck = undefined;
-    /** The fireplace refused the key or user id (10 × 403, on proof): until a new save or test. */
-    this.keyRefused = false;
+    /**
+     * Serials that refused the current key or user id (10 × 403, on proof):
+     * until a new save, a test read or a key retrieved. Their commands are
+     * refused; the other fireplaces are never concerned.
+     */
+    this.refusedBy = new Set();
     /** Serials that accepted a post signed with the current key (a 403 then is a challenge). */
     this.keyWorked = new Set();
+    /** The serial the current key was retrieved for ("Retrieve the key"), in this run. */
+    this.keyFor = undefined;
     /** Monotonic time of the last click of "Retrieve the key". */
     this.cloudAt = -Infinity;
     /** Set by shutdown(): no request nor timer any more. */
@@ -201,6 +219,42 @@ export class IntelliFireApp {
 
   mono() {
     return this.monotonic();
+  }
+
+  /** The turn off kept that was clicked last (the status, the tests), or undefined. */
+  get stopGuard() {
+    return this.stopGuards.at(-1);
+  }
+
+  /** Whether a fireplace refused the current key (on proof). */
+  get keyRefused() {
+    return this.refusedBy.size > 0;
+  }
+
+  /**
+   * The serials the current key belongs to, as far as this run knows: those
+   * that accepted a post signed with it, and the one it was retrieved for.
+   */
+  keyOwners() {
+    const owners = new Set(this.keyWorked);
+    if (this.keyFor) owners.add(this.keyFor);
+    return owners;
+  }
+
+  /** Whether the current key is known to be another fireplace's than `serial`. */
+  keyIsOthers(serial) {
+    if (!serial) return false;
+    const owners = this.keyOwners();
+    return owners.size > 0 && !owners.has(serial);
+  }
+
+  /**
+   * Whether ten 403s from `serial` (read at the address) prove that it
+   * refuses the current key: never when it accepted that key, never when the
+   * key belongs to another fireplace (accepted by it, or retrieved for it).
+   */
+  refusalProvable(serial) {
+    return Boolean(serial) && !this.keyWorked.has(serial) && !this.keyIsOthers(serial);
   }
 
   /** Waits `ms`; ends at once when `signal` aborts (a turn off takes the line). */
@@ -295,45 +349,50 @@ export class IntelliFireApp {
     }
   }
 
-  /** The turn off not seen applied, in /data (or none). */
+  /** The turn offs not seen applied, in /data (one per fireplace). */
   persistStop() {
-    const g = this.stopGuard;
-    const stop = g
-      ? {
-          host: g.target.host,
-          port: g.target.port,
-          serial: g.serial ?? null,
-          since: g.since,
-          written: g.written,
-          resends: g.resends,
-          refused: g.refused,
-        }
-      : null;
-    if (JSON.stringify(stop) === JSON.stringify(this.memory.stop ?? null)) {
+    const stops = this.stopGuards.map((g) => ({
+      host: g.target.host,
+      port: g.target.port,
+      serial: g.serial ?? null,
+      since: g.since,
+      written: g.written,
+      resends: g.resends,
+      refused: g.refused,
+    }));
+    if (JSON.stringify(stops) === JSON.stringify(this.memory.stops ?? [])) {
       return Promise.resolve(true);
     }
-    this.memory.stop = stop;
+    this.memory.stops = stops;
     return this.saveMemory();
   }
 
   /**
-   * At the start of the container, before the configuration is read: a turn
-   * off kept in /data is restored. Its key is a secret (never in /data): it
-   * leaves as soon as the configuration gives it (`resumeStop`).
+   * At the start of the container, before the configuration is read: the
+   * turn offs kept in /data are restored (those not kept in memory yet).
+   * Their key is a secret (never in /data): they leave as soon as the
+   * configuration gives it (`resumeStop`).
    */
   async boot() {
     await this.loadMemory();
-    const kept = this.memory.stop;
-    if (!kept || this.stopGuard) {
+    let restored = 0;
+    for (const kept of this.memory.stops ?? []) {
+      const serial = kept.serial ?? undefined;
+      if (this.stopGuards.some((g) => g.serial === serial)) continue;
+      const guard = this.newStopGuard({ host: kept.host, port: kept.port }, serial);
+      guard.since = kept.since;
+      guard.written = kept.written;
+      guard.resends = kept.resends;
+      guard.refused = kept.refused;
+      this.addGuard(guard);
+      restored += 1;
+    }
+    if (restored === 0) {
       return;
     }
-    const guard = this.newStopGuard({ host: kept.host, port: kept.port }, kept.serial ?? undefined);
-    guard.since = kept.since;
-    guard.written = kept.written;
-    guard.resends = kept.resends;
-    guard.refused = kept.refused;
-    this.stopGuard = guard;
-    this.logger.warn('IntelliFire: a turn off kept in /data waits for the configuration');
+    this.logger.warn(
+      `IntelliFire: ${restored} turn off(s) kept in /data wait for the configuration`,
+    );
     if (this.configRead) {
       this.resumeStop();
     }
@@ -342,6 +401,10 @@ export class IntelliFireApp {
   // --- Lifecycle -------------------------------------------------------------
 
   async start(raw = {}, { fresh = false } = {}) {
+    if (this.closed) {
+      // Closed: a configuration that arrives after shutdown() starts nothing.
+      return;
+    }
     this.stop();
     this.raw = raw ?? {};
     this.config = normalizeConfig(raw);
@@ -351,7 +414,7 @@ export class IntelliFireApp {
     if (generation !== this.generation) {
       return;
     }
-    if (this.memory.stop && !this.stopGuard) {
+    if (this.memory.stops?.length > 0) {
       await this.boot();
     }
     this.fp = freshFireplace();
@@ -363,8 +426,8 @@ export class IntelliFireApp {
     this.badge = undefined;
     this.lastStatus = undefined;
     this.publisher.start();
-    if (this.stopGuard) {
-      // The turn off follows the fireplace to the address configured now.
+    if (this.stopGuards.length > 0) {
+      // The turn offs follow the fireplace to the address configured now.
       this.followAddress();
       this.resumeStop();
     }
@@ -429,9 +492,11 @@ export class IntelliFireApp {
       this.timers.clearTimeout(this.configTimer);
       this.configTimer = undefined;
     }
-    if (this.stopGuard?.timer) {
-      this.timers.clearTimeout(this.stopGuard.timer);
-      this.stopGuard.timer = undefined;
+    for (const guard of this.stopGuards) {
+      if (guard.timer) {
+        this.timers.clearTimeout(guard.timer);
+        guard.timer = undefined;
+      }
     }
     this.memory.lastAttemptAt = Number.isFinite(this.lastAttemptAt)
       ? this.now() - (this.mono() - this.lastAttemptAt)
@@ -469,10 +534,12 @@ export class IntelliFireApp {
             this.configTimer = undefined;
             this.onConnected(getConfig).catch(() => {});
           },
-          this.stopGuard ? TIMINGS.configRetryStop : TIMINGS.configRetry,
+          this.stopGuards.length > 0 ? TIMINGS.configRetryStop : TIMINGS.configRetry,
         );
       };
+      // A request that fails after shutdown() arms nothing (it would retry forever).
       if (!this.closed) retry();
+      if (this.closed) return;
       const known = this.gladys.config;
       if (!this.configRead && known && typeof known === 'object' && Object.keys(known).length > 0) {
         // The configuration the SDK read just before 'connected': used meanwhile.
@@ -501,6 +568,7 @@ export class IntelliFireApp {
    * reading the fireplace nor sending old values.
    */
   async connected(raw = {}) {
+    if (this.closed) return;
     this.configRead = true;
     if (!this.started) {
       this.started = true;
@@ -524,6 +592,7 @@ export class IntelliFireApp {
   }
 
   async applyConfig(raw, { reconnection = false } = {}) {
+    if (this.closed) return;
     this.configRead = true;
     if (!this.started || this.needsRestart(raw)) {
       this.started = true;
@@ -535,7 +604,9 @@ export class IntelliFireApp {
     this.config = normalizeConfig(raw);
     const newKey = credentialsKey(previous) !== credentialsKey(this.config);
     if (newKey) {
+      // Another key: nothing known of whom it belongs to yet.
       this.keyWorked.clear();
+      this.keyFor = undefined;
     }
     if (newKey || !reconnection) {
       // Key or user id saved (the same ones too): a refusal is lifted, a turn off waiting leaves.
@@ -563,7 +634,7 @@ export class IntelliFireApp {
   }
 
   async setStatus(connected, message, generation = this.generation) {
-    if (generation !== this.generation) {
+    if (generation !== this.generation || this.closed) {
       return;
     }
     const key = JSON.stringify([connected, message ?? null]);
@@ -710,9 +781,10 @@ export class IntelliFireApp {
   /**
    * A read (poll, fresh read of a command, read back, check of a turn off):
    * applied when it has an identity and started after the last post and the
-   * last read applied. Returns whether it was applied.
+   * last read applied. Returns whether it was applied. `decided`: the turn
+   * off kept whose own check made this read (it decides on it itself).
    */
-  applyRead(data, startedAt) {
+  applyRead(data, startedAt, decided) {
     const f = this.fp;
     if (!data.serial) {
       throw new FireplaceError(ERROR_KINDS.PROTOCOL, 'No serial number', { identity: true });
@@ -734,7 +806,7 @@ export class IntelliFireApp {
     f.data = data;
     f.readAt = startedAt;
     this.saveTarget();
-    this.observeStop(data, startedAt);
+    this.observeStop(data, startedAt, decided);
     this.observeStart(data, startedAt);
     return true;
   }
@@ -772,24 +844,29 @@ export class IntelliFireApp {
     return wait;
   }
 
-  /** Notes added to the status: a turn off kept, a key refused, another serial. */
+  /** What the status says of one turn off kept. */
+  stopNote(g) {
+    if (!this.credentialsFor(g.target)) return T.stopWaitsKey;
+    if (g.refused) return T.stopKeyRefused;
+    if (this.keyIsOthers(g.serial)) return T.stopForeignKey;
+    if (g.otherSerial) return T.stopOtherSerial;
+    if (g.written && g.resends >= TIMINGS.stopResends && !g.applied) return T.stopHeld;
+    return T.stopPending(age(this.now() - g.since));
+  }
+
+  /** Notes added to the status: the turn offs kept, a key refused, another serial. */
   withNotes(message) {
     let out = message;
-    const g = this.stopGuard;
-    if (g) {
-      if (!this.credentialsFor(g.target)) {
-        out = join(out, T.stopWaitsKey);
-      } else if (g.refused) {
-        out = join(out, T.stopKeyRefused);
-      } else if (g.otherSerial) {
-        out = join(out, T.stopOtherSerial);
-      } else if (g.written && g.resends >= TIMINGS.stopResends && !g.applied) {
-        out = join(out, T.stopHeld);
-      } else {
-        out = join(out, T.stopPending(age(this.now() - g.since)));
-      }
+    const several = this.stopGuards.length > 1;
+    const current = this.stopSerial();
+    for (const g of this.stopGuards) {
+      const note = this.stopNote(g);
+      // Several fireplaces, or another one than the fireplace read: the note names its own
+      // (the last 4 digits of its serial).
+      const named = g.serial && (several || g.serial !== current);
+      out = join(out, named ? T.ofFireplace(shortId(g.serial), note) : note);
     }
-    if (this.keyRefused && !g?.refused) {
+    if (current && this.refusedBy.has(current) && !this.guardFor(current)?.refused) {
       out = join(out, T.keyRefused);
     } else if (!this.config.credentials) {
       out = join(out, this.config.badCredentials ? T.badCredentials : T.noCredentials);
@@ -810,7 +887,7 @@ export class IntelliFireApp {
         : c.invalidAddress
           ? T.badAddress(c.invalidAddress)
           : T.noAddress;
-      return [false, this.stopGuard ? this.withNotes(base) : base];
+      return [false, this.stopGuards.length > 0 ? this.withNotes(base) : base];
     }
     if (this.paused) {
       return [false, this.withNotes(T.paused(age(this.pausedUntil - this.mono())))];
@@ -829,7 +906,7 @@ export class IntelliFireApp {
       en: statusText(f.data, 'en'),
       fr: statusText(f.data, 'fr'),
     };
-    return [true, this.withNotes(T.connected(T.summary(f.serial.slice(-4).toUpperCase(), state)))];
+    return [true, this.withNotes(T.connected(T.summary(shortId(f.serial), state)))];
   }
 
   async updateStatus(generation = this.generation) {
@@ -989,11 +1066,11 @@ export class IntelliFireApp {
     return this.status()[1];
   }
 
-  /** A key refusal lifted (key saved, test read, key retrieved): a turn off kept leaves. */
+  /** A key refusal lifted (key saved, test read, key retrieved): the turn offs kept leave. */
   liftKeyRefusal() {
-    this.keyRefused = false;
-    if (this.stopGuard) {
-      this.stopGuard.refused = false;
+    this.refusedBy.clear();
+    if (this.stopGuards.length > 0) {
+      for (const guard of this.stopGuards) guard.refused = false;
       this.resumeStop();
     }
   }
@@ -1027,9 +1104,16 @@ export class IntelliFireApp {
       return T.keyNotSaved(err.code ?? err.status ?? 'error');
     }
     this.logger.info('IntelliFire: key and user id retrieved from the cloud and saved');
-    await this.inOrder(() =>
-      this.applyConfig({ ...this.raw, api_key: match.apiKey, user_id: found.userId }),
-    );
+    await this.inOrder(async () => {
+      // The configuration as it is when this turn comes (one saved before applies first).
+      const saved = { ...this.raw, api_key: match.apiKey, user_id: found.userId };
+      await this.applyConfig(saved);
+      // The key is that of this serial (not a secret, in memory only): ten 403s prove a
+      // refused key for this fireplace only, never for another one at the address.
+      if (credentialsKey(this.config) === credentialsKey(normalizeConfig(saved))) {
+        this.keyFor = serial;
+      }
+    });
     return T.keySaved;
   }
 
@@ -1081,7 +1165,7 @@ export class IntelliFireApp {
     if (this.command) {
       throw this.refusal(ERRORS.stillRunning);
     }
-    const entry = { role: target.role, seq: this.protectSeq, sent: false };
+    const entry = { role: target.role, serial: target.serial, seq: this.protectSeq, sent: false };
     this.command = entry;
     try {
       return await this.runCommand(target, wanted, received, entry);
@@ -1094,6 +1178,10 @@ export class IntelliFireApp {
 
   /** The checks before any request of a command, and again right before each post. */
   checkCommand(generation, entry) {
+    if (this.closed) {
+      // After shutdown(): nothing requested any more (no read, no challenge, no post).
+      throw this.refusal(ERRORS.closed);
+    }
     if (!this.config.allowControl) {
       throw this.refusal(ERRORS.disabled);
     }
@@ -1106,8 +1194,8 @@ export class IntelliFireApp {
     if (this.stops.length > 0 || this.stopWorker) {
       throw this.refusal(ERRORS.stopInProgress);
     }
-    // Only a turn on (a newer intent) may go while a turn off is kept.
-    if (this.stopGuard && entry.role !== FEATURES.TURN_ON) {
+    // Only a turn on (a newer intent) may go while a turn off of this fireplace is kept.
+    if (this.guardFor(entry.serial) && entry.role !== FEATURES.TURN_ON) {
       throw this.refusal(ERRORS.stopInProgress);
     }
     if (this.paused) {
@@ -1116,8 +1204,12 @@ export class IntelliFireApp {
     if (!this.config.credentials) {
       throw this.refusal(ERRORS.noCredentials);
     }
-    if (this.keyRefused) {
+    if (this.refusedBy.has(entry.serial)) {
       throw this.refusal(ERRORS.keyRefused);
+    }
+    // Signed only with its own key: never with a key known to be another fireplace's.
+    if (this.keyIsOthers(entry.serial)) {
+      throw this.refusal(ERRORS.notItsKey);
     }
   }
 
@@ -1144,7 +1236,7 @@ export class IntelliFireApp {
         );
       }
       // Already on: nothing posted (a turn on never re-arms the timer of a fire lit elsewhere).
-      if (fresh.power && !this.isPending(role) && !this.stopGuard) {
+      if (fresh.power && !this.isPending(role) && !this.guardFor(fresh.serial)) {
         return undefined;
       }
       const seconds = this.config.sessionMinutes * 60;
@@ -1356,14 +1448,22 @@ export class IntelliFireApp {
         this.dropStartCheck();
       }
       if (role === FEATURES.TURN_ON && entry.sent && !clearRefusal(err)) {
-        // It may have lit: the newer intent wins over a turn off kept, and the session is checked.
-        if (entry.seq === this.protectSeq) this.dropStopGuard('newer turn on, unconfirmed');
+        // It may have lit: the newer intent wins over the turn off of this fireplace kept,
+        // and the session is checked.
+        if (entry.seq === this.protectSeq) {
+          this.dropGuard(this.guardFor(target.serial), 'newer turn on, unconfirmed');
+        }
       }
       return this.commandFailed(err, entry, role, target.serial);
     }
-    if (role === FEATURES.TURN_ON && this.stopGuard && entry.seq === this.protectSeq) {
-      // A newer turn on clicked with the option and accepted lets the turn off before it go.
-      this.dropStopGuard('newer turn on');
+    if (
+      role === FEATURES.TURN_ON &&
+      this.guardFor(target.serial) &&
+      entry.seq === this.protectSeq
+    ) {
+      // A newer turn on clicked with the option and accepted lets the turn off before it go
+      // (this fireplace's only: another fireplace's turn off is never let go by it).
+      this.dropGuard(this.guardFor(target.serial), 'newer turn on');
     }
     for (const step of rest) {
       // Posted whatever the deadline of the ack; only a turn off clicked meanwhile stops it.
@@ -1464,16 +1564,14 @@ export class IntelliFireApp {
   }
 
   /**
-   * Whether ten posts answered 403 prove a refused key: never for a serial
-   * that accepted this key, and only when that serial is the one read at
-   * the address (intellifire4py reads a 403 as a challenge expired).
+   * Whether ten posts answered 403 prove a refused key: only when that
+   * serial is the one read at the address, never for a serial that accepted
+   * this key nor when the key belongs to another one (`refusalProvable`;
+   * intellifire4py reads a 403 as a challenge expired).
    */
   keyRefusalProven(err, serial) {
     return (
-      err?.kind === ERROR_KINDS.AUTH &&
-      Boolean(serial) &&
-      !this.keyWorked.has(serial) &&
-      this.fp.serial === serial
+      err?.kind === ERROR_KINDS.AUTH && this.refusalProvable(serial) && this.fp.serial === serial
     );
   }
 
@@ -1482,7 +1580,7 @@ export class IntelliFireApp {
     const reason = errorReason(err);
     this.logger.warn(`IntelliFire: ${role} failed (${reason})`);
     if (this.keyRefusalProven(err, serial)) {
-      this.keyRefused = true;
+      this.refusedBy.add(serial);
       this.updateStatus().catch(() => {});
       throw this.refusal(ERRORS.keyRefused);
     }
@@ -1719,14 +1817,51 @@ export class IntelliFireApp {
     return sameAddress(target, this.config.address) ? this.config.credentials : undefined;
   }
 
-  /** The turn off kept follows its fireplace to the address configured now. */
+  /**
+   * The turn off kept for `serial`, or undefined. A turn off kept without
+   * serial (an /data written before serials were kept) stands for any one.
+   */
+  guardFor(serial) {
+    return (
+      this.stopGuards.find((g) => g.serial === serial) ??
+      (serial ? this.stopGuards.find((g) => !g.serial) : undefined)
+    );
+  }
+
+  hasGuard(guard) {
+    return Boolean(guard) && this.stopGuards.includes(guard);
+  }
+
+  /**
+   * A new turn off kept: one per fireplace, `LIMITS.stopGuards` at most.
+   * Beyond, the oldest one of a fireplace that is neither this one nor the
+   * one read at the address is let go (logged).
+   */
+  addGuard(guard) {
+    this.stopGuards.push(guard);
+    while (this.stopGuards.length > LIMITS.stopGuards) {
+      const current = this.stopSerial();
+      const oldest =
+        this.stopGuards.find((g) => g !== guard && (!current || g.serial !== current)) ??
+        this.stopGuards[0];
+      this.dropGuard(oldest, `more than ${LIMITS.stopGuards} fireplaces with a turn off kept`);
+    }
+    return guard;
+  }
+
+  /** The turn offs kept follow their fireplace to the address configured now. */
   followAddress() {
-    const g = this.stopGuard;
     const a = this.config.address;
-    if (!g || !a || sameAddress(g.target, a)) return;
-    g.target = { host: a.host, port: a.port };
-    g.otherSerial = false;
-    this.logger.info('IntelliFire: the turn off kept follows the fireplace to the new address');
+    if (!a) return;
+    let moved = false;
+    for (const g of this.stopGuards) {
+      if (sameAddress(g.target, a)) continue;
+      g.target = { host: a.host, port: a.port };
+      g.otherSerial = false;
+      moved = true;
+    }
+    if (!moved) return;
+    this.logger.info('IntelliFire: the turn offs kept follow the fireplace to the new address');
     this.persistStop().catch(() => {});
   }
 
@@ -1741,12 +1876,14 @@ export class IntelliFireApp {
     if (!target) {
       throw this.refusal(ERRORS.noAddress);
     }
-    if (this.stopGuard) {
-      // A new click: a turn off held or refused is tried again, in full.
-      this.stopGuard.refused = false;
-    }
     // The turn off belongs to the device clicked (its serial), never to the last fireplace read.
-    const job = this.queueStop({ target, received, serial: serial ?? this.stopSerial() });
+    const owner = serial ?? this.stopSerial();
+    const kept = this.guardFor(owner);
+    if (kept) {
+      // A new click: this fireplace's turn off held or refused is tried again, in full.
+      kept.refused = false;
+    }
+    const job = this.queueStop({ target, received, serial: owner });
     const answerIn = Math.max(0, received + TIMINGS.commandAnswerBy - this.mono());
     let timer;
     const outcome = await new Promise((resolve) => {
@@ -1763,15 +1900,14 @@ export class IntelliFireApp {
     return undefined;
   }
 
-  /** Queues a turn off; a click for the same target still waiting is joined. */
+  /** Queues a turn off; a click for the same fireplace and target still waiting is joined. */
   queueStop({ target, received, fromBoot = false, serial }) {
     if (this.closed) {
-      // Closed: nothing leaves any more (the turn off kept in /data goes at the next start).
-      const closed = { target, state: { written: false } };
-      closed.done = Promise.resolve({ error: this.refusal(ERRORS.stopPending) });
-      return closed;
+      return this.keepClosed({ target, serial });
     }
-    let job = this.stops.find((j) => !j.running && sameAddress(j.target, target));
+    let job = this.stops.find(
+      (j) => !j.running && j.serial === serial && sameAddress(j.target, target),
+    );
     if (job) {
       return job;
     }
@@ -1784,16 +1920,32 @@ export class IntelliFireApp {
     return job;
   }
 
+  /**
+   * After shutdown(): nothing leaves any more. The turn off is kept (in
+   * /data, never awaited) and leaves at the next start of the integration.
+   */
+  keepClosed({ target, serial }) {
+    const guard = this.guardFor(serial) ?? this.addGuard(this.newStopGuard(target, serial));
+    if (!guard.serial && serial) guard.serial = serial;
+    this.persistStop().catch(() => {});
+    const job = { target, serial, state: { written: false } };
+    job.done = Promise.resolve({ error: this.refusal(ERRORS.stopClosed) });
+    return job;
+  }
+
   runStops() {
     if (this.stopWorker) {
       return;
     }
-    this.stopWorker = (async () => {
+    // Cleared at the end of its last turn, never before it is set (it may end at once).
+    let worker;
+    let finished = false;
+    worker = (async () => {
       try {
         while (this.stops.length > 0) {
           const job = this.stops[0];
           if (this.closed) {
-            job.resolve({ error: this.refusal(ERRORS.stopPending) });
+            this.keepClosed(job).done.then(job.resolve);
             this.stops.shift();
             continue;
           }
@@ -1807,30 +1959,34 @@ export class IntelliFireApp {
           this.stops.shift();
         }
       } finally {
-        this.stopWorker = undefined;
+        finished = true;
+        if (this.stopWorker === worker) this.stopWorker = undefined;
       }
     })();
+    if (!finished) this.stopWorker = worker;
   }
 
-  /** A turn off kept that may leave now (key known, not refused): queued, else checked. */
+  /** The turn offs kept that may leave now (key known, not refused): queued, else checked. */
   resumeStop() {
-    const guard = this.stopGuard;
-    if (!guard || this.closed) return;
+    if (this.closed) return;
     this.followAddress();
-    const ready =
-      this.credentialsFor(guard.target) &&
-      !guard.refused &&
-      !(guard.written && guard.resends >= TIMINGS.stopResends);
-    if (ready && !guard.written) {
-      // Never written: it leaves first, as a click would.
-      this.queueStop({
-        target: guard.target,
-        received: this.mono(),
-        fromBoot: true,
-        serial: guard.serial,
-      });
-    } else {
-      this.armStopCheck(0);
+    for (const guard of [...this.stopGuards]) {
+      const ready =
+        this.credentialsFor(guard.target) &&
+        !guard.refused &&
+        !this.keyIsOthers(guard.serial) &&
+        !(guard.written && guard.resends >= TIMINGS.stopResends);
+      if (ready && !guard.written) {
+        // Never written: it leaves first, as a click would.
+        this.queueStop({
+          target: guard.target,
+          received: this.mono(),
+          fromBoot: true,
+          serial: guard.serial,
+        });
+      } else {
+        this.armStopCheck(guard, 0);
+      }
     }
   }
 
@@ -1852,23 +2008,44 @@ export class IntelliFireApp {
     };
   }
 
+  /** Whether the last read of the address shows another fireplace than this turn off's. */
+  otherAtAddress(guard) {
+    return Boolean(
+      guard.serial &&
+      this.fp.serial &&
+      this.fp.serial !== guard.serial &&
+      sameAddress(guard.target, this.config.address),
+    );
+  }
+
   /**
    * What a read says of the turn off: 'other' (another serial answers at
-   * the address: nothing posted, nothing applied), 'done' (the flame off,
-   * the thermostat off), 'watch' (off, but a turn on sent shortly before may
-   * still land), 'wait' (read too soon, or off but the turn off never left:
-   * a second read decides), 'blocked' (no key, or a key refused on proof),
-   * 'hold' (posted 4 times without effect), 'resend'.
+   * the address, or no serial read now and the last read of the address
+   * shows another one: nothing posted, nothing applied), 'done' (the flame
+   * off, the thermostat off), 'watch' (off, but a turn on sent shortly
+   * before may still land), 'wait' (read too soon, or off but the turn off
+   * never left: a second read decides), 'blocked' (no key, a key refused on
+   * proof, or a key known to be another fireplace's), 'hold' (posted 4
+   * times without effect), 'resend'.
    */
   decideStop(guard, read, readStartedAt) {
-    if (read?.serial && guard.serial && read.serial !== guard.serial) {
+    if (
+      (read?.serial && guard.serial && read.serial !== guard.serial) ||
+      (!read?.serial && this.otherAtAddress(guard))
+    ) {
       guard.otherSerial = true;
       guard.offReads = 0;
       return 'other';
     }
     guard.otherSerial = false;
-    if (read?.serial && !guard.serial) {
+    if (
+      read?.serial &&
+      !guard.serial &&
+      !this.stopGuards.some((g) => g !== guard && g.serial === read.serial)
+    ) {
+      // A turn off kept without serial (an older /data) is the one of the fireplace read.
       guard.serial = read.serial;
+      this.persistStop().catch(() => {});
     }
     const off =
       read?.power === false && (read.thermostat === false || read.hasThermostat === false);
@@ -1885,23 +2062,25 @@ export class IntelliFireApp {
     if (guard.sentAt !== undefined && readStartedAt < guard.sentAt + TIMINGS.stopApplyDelay) {
       return 'wait';
     }
-    if (!this.credentialsFor(guard.target) || guard.refused) {
+    if (!this.credentialsFor(guard.target) || guard.refused || this.keyIsOthers(guard.serial)) {
       return 'blocked';
     }
     return guard.written && guard.resends >= TIMINGS.stopResends ? 'hold' : 'resend';
   }
 
-  /** A read seen by the turn off kept: done, or checked now. */
-  observeStop(read, startedAt) {
-    const guard = this.stopGuard;
-    if (!guard || !sameAddress(guard.target, this.config.address)) {
-      return;
-    }
-    const decision = this.decideStop(guard, read, startedAt);
-    if (decision === 'done') {
-      this.dropStopGuard('applied');
-    } else if (decision === 'resend' && !this.checking) {
-      this.armStopCheck(0);
+  /**
+   * A read seen by the turn offs kept: done, or checked now. `decided`: the
+   * turn off whose own check made this read (it decides on it once, itself).
+   */
+  observeStop(read, startedAt, decided) {
+    for (const guard of [...this.stopGuards]) {
+      if (guard === decided || !sameAddress(guard.target, this.config.address)) continue;
+      const decision = this.decideStop(guard, read, startedAt);
+      if (decision === 'done') {
+        this.dropGuard(guard, 'applied');
+      } else if (decision === 'resend' && !this.checking) {
+        this.armStopCheck(guard, 0);
+      }
     }
   }
 
@@ -1935,9 +2114,11 @@ export class IntelliFireApp {
 
   /**
    * After ten 403s to a turn off: a read on the line held says whether this
-   * is a refused key (proof: the serial of the turn off, a key it never
-   * accepted) or another fireplace at the address. Returns 'refused',
-   * 'other' or 'retry'.
+   * fireplace refuses the key. Returns 'other' (another serial at the
+   * address), 'foreign' (the key is known to be another fireplace's: never a
+   * refusal), 'refused' (proof: this serial read at the address, a key it
+   * never accepted and not known to be another one's; marked for this
+   * serial only) or 'retry'.
    */
   async judgeForbidden(guard, target, holder) {
     let read;
@@ -1954,9 +2135,12 @@ export class IntelliFireApp {
       return 'other';
     }
     const serial = guard.serial ?? read.serial;
-    return read.serial && read.serial === serial && !this.keyWorked.has(serial)
-      ? 'refused'
-      : 'retry';
+    if (!read.serial || read.serial !== serial) return 'retry';
+    if (this.keyIsOthers(serial)) return 'foreign';
+    if (!this.refusalProvable(serial)) return 'retry';
+    guard.refused = true;
+    this.refusedBy.add(serial);
+    return 'refused';
   }
 
   /**
@@ -1968,15 +2152,10 @@ export class IntelliFireApp {
   async sendStop(job) {
     const { target, state } = job;
     const retryUntil = Math.max(job.received, this.mono()) + TIMINGS.stopRetryFor;
-    const g = this.stopGuard;
-    const sameFireplace =
-      g && (g.serial && job.serial ? g.serial === job.serial : sameAddress(g.target, target));
-    if (!sameFireplace) {
-      if (g) this.dropStopGuard('a turn off for another fireplace');
-      this.stopGuard = this.newStopGuard(target, job.serial);
-    }
-    const guard = this.stopGuard;
+    // One turn off per fireplace: a click for another serial never lets this one go.
+    const guard = this.guardFor(job.serial) ?? this.addGuard(this.newStopGuard(target, job.serial));
     guard.target = target;
+    // A turn off kept without serial (an older /data) belongs to the device clicked.
     if (!guard.serial && job.serial) guard.serial = job.serial;
     if (!job.fromBoot) {
       guard.since = this.now();
@@ -1988,28 +2167,31 @@ export class IntelliFireApp {
     // In /data before the first byte; a save that fails or hangs never holds it (200 ms at most).
     await this.bounded(this.persistStop(), TIMINGS.stopSaveWait);
     const credentials = this.credentialsFor(target);
-    if (
-      guard.serial &&
-      this.fp.serial &&
-      this.fp.serial !== guard.serial &&
-      sameAddress(target, this.config.address)
-    ) {
+    if (this.otherAtAddress(guard)) {
       // The last read at the address is another fireplace: nothing posted to it,
       // no refusal counted; the checks read the address and post once this one is back.
       guard.otherSerial = true;
-      this.armStopCheck();
+      this.armStopCheck(guard);
       this.persistStop().catch(() => {});
       this.updateStatus().catch(() => {});
       job.resolve({ error: this.refusal(ERRORS.stopOtherSerial) });
       return;
     }
-    if (!credentials || guard.refused) {
-      // Nothing can sign it: kept, it leaves when a key is saved; the reads watch it.
-      this.armStopCheck();
+    const foreign = this.keyIsOthers(guard.serial);
+    if (!credentials || guard.refused || foreign) {
+      // Nothing can sign it (no key, a key it refused, another fireplace's key): kept, it
+      // leaves when a key is saved; the reads watch it.
+      this.armStopCheck(guard);
       this.persistStop().catch(() => {});
       this.updateStatus().catch(() => {});
       job.resolve({
-        error: this.refusal(credentials ? ERRORS.stopKeyRefused : ERRORS.stopWaitsKey),
+        error: this.refusal(
+          !credentials
+            ? ERRORS.stopWaitsKey
+            : guard.refused
+              ? ERRORS.stopKeyRefused
+              : ERRORS.stopForeignKey,
+        ),
       });
       return;
     }
@@ -2028,7 +2210,7 @@ export class IntelliFireApp {
           state.written = true;
           const at = this.mono();
           this.lastSentAt = at;
-          if (this.stopGuard === guard) {
+          if (this.hasGuard(guard)) {
             guard.written = true;
             guard.sentAt = at;
             guard.forbidden = 0;
@@ -2037,7 +2219,7 @@ export class IntelliFireApp {
         });
         failure = undefined;
         if (guard.serial ?? this.fp.serial) this.keyWorked.add(guard.serial ?? this.fp.serial);
-        if (resendOnBoot && this.stopGuard === guard) {
+        if (resendOnBoot && this.hasGuard(guard)) {
           guard.resends += 1;
         }
         await this.sleep(
@@ -2069,13 +2251,9 @@ export class IntelliFireApp {
       } finally {
         holder.release();
       }
-      if (judged === 'refused') {
-        // Ten 403s, this serial, a key it never accepted: kept until a new key, a test read or a click.
-        guard.refused = true;
-        this.keyRefused = true;
-        break;
-      }
-      if (judged === 'other') break;
+      // Ten 403s: this serial refuses the key (kept until a new key, a test read or a
+      // click), another fireplace answers, or the key is another fireplace's.
+      if (judged === 'refused' || judged === 'other' || judged === 'foreign') break;
       const again =
         RETRYABLE.includes(failure.kind) ||
         failure.kind === ERROR_KINDS.AUTH ||
@@ -2088,7 +2266,7 @@ export class IntelliFireApp {
     }
     if (back && sameAddress(target, this.config.address)) {
       try {
-        if (this.applyRead(back, backStart)) {
+        if (this.applyRead(back, backStart, guard)) {
           this.publishAll().catch(() => {});
         }
       } catch {
@@ -2098,13 +2276,13 @@ export class IntelliFireApp {
     const decision = back === undefined ? undefined : this.decideStop(guard, back, Infinity);
     const confirmed = decision === 'done' || decision === 'watch';
     const forbidden = failure?.kind === ERROR_KINDS.AUTH || failure?.kind === ERROR_KINDS.CHALLENGE;
-    if (forbidden && !state.written && this.stopGuard === guard) guard.forbidden += 1;
-    if (this.stopGuard === guard) {
+    if (forbidden && !state.written && this.hasGuard(guard)) guard.forbidden += 1;
+    if (this.hasGuard(guard)) {
       if (decision === 'done') {
-        this.dropStopGuard('applied');
+        this.dropGuard(guard, 'applied');
       } else {
         // Armed before /data is written, never awaited: a hung disk never stops the checks.
-        this.armStopCheck(decision === 'watch' ? this.watchDelay(guard) : undefined);
+        this.armStopCheck(guard, decision === 'watch' ? this.watchDelay(guard) : undefined);
         this.persistStop().catch(() => {});
       }
     }
@@ -2117,6 +2295,8 @@ export class IntelliFireApp {
       result = {};
     } else if (judged === 'other') {
       result = { error: this.refusal(ERRORS.stopOtherSerial) };
+    } else if (judged === 'foreign') {
+      result = { error: this.refusal(ERRORS.stopForeignKey) };
     } else if (failure) {
       const reason = errorReason(failure);
       this.logger.warn(`IntelliFire: turn off failed (${reason})`);
@@ -2140,15 +2320,15 @@ export class IntelliFireApp {
   }
 
   /**
-   * The periodic check of the turn off: reads the fireplace, then posts the
-   * turn off again only when `decideStop` says so. It gives its turn up to a
-   * click or a command, and checks once more right before its post.
+   * The periodic check of one turn off kept: reads the fireplace, then posts
+   * the turn off again only when `decideStop` says so. It gives its turn up
+   * to a click or a command, and checks once more right before its post.
+   * One check at a time (the turn offs of other fireplaces wait 1 s).
    */
-  async runCheck() {
-    const guard = this.stopGuard;
-    if (!guard || this.closed) return;
+  async runCheck(guard) {
+    if (this.closed || !this.hasGuard(guard)) return;
     if (this.checkMustYield() || this.checking) {
-      this.armStopCheck(SECOND);
+      this.armStopCheck(guard, SECOND);
       return;
     }
     this.checking = true;
@@ -2163,7 +2343,7 @@ export class IntelliFireApp {
     try {
       await (async () => {
         holder = await this.lane.acquire('check');
-        if (this.checkMustYield() || this.stopGuard !== guard) {
+        if (this.checkMustYield() || !this.hasGuard(guard)) {
           decision = 'yield';
           return;
         }
@@ -2178,14 +2358,14 @@ export class IntelliFireApp {
           if (err.kind === ERROR_KINDS.ABORTED) throw err;
           read = undefined;
         }
-        if (this.stopGuard !== guard) return;
+        if (!this.hasGuard(guard)) return;
         if (read && sameAddress(target, this.config.address)) {
           try {
-            if (this.applyRead(read, startedAt)) this.publishAll().catch(() => {});
+            if (this.applyRead(read, startedAt, guard)) this.publishAll().catch(() => {});
           } catch {
             // No identity: decided below on the flame only.
           }
-          if (this.stopGuard !== guard) return;
+          if (!this.hasGuard(guard)) return;
         }
         decision = this.decideStop(guard, read, startedAt);
         if (decision !== 'resend' || !credentials) return;
@@ -2198,7 +2378,7 @@ export class IntelliFireApp {
           guard.sentAt = sentAtBefore;
         };
         await this.postStop(target, credentials, holder, this.mono() + TIMINGS.readTimeout, () => {
-          if (this.checkMustYield() || this.stopGuard !== guard) {
+          if (this.checkMustYield() || !this.hasGuard(guard)) {
             throw new Error('a newer click or command');
           }
           this.logger.warn('IntelliFire: the flame is still on after a turn off: posted again');
@@ -2213,7 +2393,7 @@ export class IntelliFireApp {
         // Accepted by the fireplace: a resend (a refusal or a silence is not one).
         if (wasWritten) guard.resends += 1;
         await this.sleep(TIMINGS.applyWait, holder.signal);
-        if (this.stopGuard !== guard) return;
+        if (!this.hasGuard(guard)) return;
         try {
           const backStart = this.mono();
           const back = await this.client.poll(target, {
@@ -2224,7 +2404,7 @@ export class IntelliFireApp {
           if (after === 'done' || after === 'watch') decision = after;
           if (sameAddress(target, this.config.address)) {
             try {
-              if (this.applyRead(back, backStart)) this.publishAll().catch(() => {});
+              if (this.applyRead(back, backStart, guard)) this.publishAll().catch(() => {});
             } catch {
               // No identity.
             }
@@ -2236,12 +2416,9 @@ export class IntelliFireApp {
     } catch (err) {
       if (!err?.sent) undo?.();
       forbiddenFailure = err?.kind === ERROR_KINDS.AUTH || err?.kind === ERROR_KINDS.CHALLENGE;
-      if (err?.kind === ERROR_KINDS.AUTH && holder && this.stopGuard === guard) {
-        const judged = await this.judgeForbidden(guard, target, holder);
-        if (judged === 'refused') {
-          guard.refused = true;
-          this.keyRefused = true;
-        }
+      if (err?.kind === ERROR_KINDS.AUTH && holder && this.hasGuard(guard)) {
+        // Marks this serial as refusing the key, on proof only (never another fireplace).
+        await this.judgeForbidden(guard, target, holder);
       } else if (err?.kind !== ERROR_KINDS.YIELDED && err?.kind !== ERROR_KINDS.ABORTED) {
         this.logger.warn(`IntelliFire: check of the turn off failed (${errorReason(err)})`);
       }
@@ -2249,11 +2426,11 @@ export class IntelliFireApp {
       holder?.release();
       this.checking = false;
     }
-    if (this.stopGuard !== guard) return;
+    if (!this.hasGuard(guard)) return;
     if (attempted && !written && forbiddenFailure) guard.forbidden += 1;
     if (written) this.followUp();
     if (decision === 'done') {
-      this.dropStopGuard('applied');
+      this.dropGuard(guard, 'applied');
       return;
     }
     let delay;
@@ -2262,7 +2439,7 @@ export class IntelliFireApp {
     else if (decision === 'wait' && guard.sentAt !== undefined) {
       delay = Math.max(0, guard.sentAt + TIMINGS.stopApplyDelay - this.mono());
     }
-    this.armStopCheck(delay);
+    this.armStopCheck(guard, delay);
     this.persistStop().catch(() => {});
     this.updateStatus().catch(() => {});
   }
@@ -2282,20 +2459,21 @@ export class IntelliFireApp {
     return Math.min(TIMINGS.stopCheckMax, TIMINGS.stopCheck * 2 ** Math.min(extra, 10));
   }
 
-  dropStopGuard(reason) {
-    const guard = this.stopGuard;
-    if (!guard) return;
+  /** One turn off let go (applied, a newer turn on of its fireplace, the bound). */
+  dropGuard(guard, reason) {
+    const index = guard ? this.stopGuards.indexOf(guard) : -1;
+    if (index < 0) return;
     if (guard.timer) this.timers.clearTimeout(guard.timer);
-    this.stopGuard = undefined;
+    guard.timer = undefined;
+    this.stopGuards.splice(index, 1);
     this.logger.info(`IntelliFire: turn off let go (${reason})`);
     this.persistStop().catch(() => {});
     this.updateStatus().catch(() => {});
   }
 
-  /** The next check of the turn off: whatever the interval, the failures or a pause. */
-  armStopCheck(delay) {
-    const guard = this.stopGuard;
-    if (!guard || this.closed) return;
+  /** The next check of a turn off kept: whatever the interval, the failures or a pause. */
+  armStopCheck(guard, delay) {
+    if (this.closed || !this.hasGuard(guard)) return;
     const wait = delay ?? this.stopDelay(guard);
     const dueAt = this.mono() + wait;
     if (guard.timer) {
@@ -2305,8 +2483,8 @@ export class IntelliFireApp {
     guard.dueAt = dueAt;
     guard.timer = this.timers.setTimeout(() => {
       guard.timer = undefined;
-      if (this.stopGuard !== guard) return;
-      this.runCheck().catch((err) => this.logger.warn(`IntelliFire: check: ${err.message}`));
+      if (!this.hasGuard(guard)) return;
+      this.runCheck(guard).catch((err) => this.logger.warn(`IntelliFire: check: ${err.message}`));
     }, wait);
   }
 }

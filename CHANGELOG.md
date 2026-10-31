@@ -24,5 +24,9 @@ the notes of the version's GitHub Release.
 - A turn off kept follows its fireplace (serial) to a new address; another fireplace never lets it go.
 - A turn off belongs to the device clicked; a setpoint never lengthens a shorter timer; the app stops
   every request and timer at shutdown.
+- One turn off kept per fireplace (4 at most): the turn off of another device never lets one go; ten
+  403s prove a refused key for that fireplace only, never when the key is known to be another one's;
+  a turn off or a command is never signed with another fireplace's key; a command clicked after
+  shutdown is refused, a turn off kept for the next start.
 - "Retrieve the key" button: one sign-in to the IntelliFire cloud per click, key and user id saved in the
   configuration.
